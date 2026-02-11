@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Compare Runs — Benchmark App{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Compare Runs</h1>
+    <div id="runLabels" class="run-labels"></div>
+</div>
+
+{% if run_ids %}
+<div class="mode-switcher" id="modeSwitcher">
+    <button class="mode-pill active" onclick="switchMode('grading', this)">Grading</button>
+    <button class="mode-pill" onclick="switchMode('dashboard', this)">Dashboard</button>
+    <button class="mode-pill" onclick="switchMode('config', this)">Config</button>
+</div>
+<div class="grading-progress" id="gradingProgress"></div>
+
+<div id="gradingMode">
+    <div class="grade-summary" id="gradeSummary"></div>
+    <div id="queryCards"></div>
+    <div class="export-bar">
+        <a href="/api/export/html?run_ids={{ run_ids_str }}" target="_blank" class="btn btn-secondary">Share as HTML</a>
+        <a href="/api/export/csv?run_ids={{ run_ids_str }}" class="btn btn-secondary">Export CSV</a>
+        <a href="/api/export/json?run_ids={{ run_ids_str }}" class="btn btn-secondary">Export JSON</a>
+    </div>
+</div>
+
+<div id="dashboardMode" style="display:none">
+    <div id="dashboardContent"></div>
+    <div class="export-bar">
+        <a href="/api/export/html?run_ids={{ run_ids_str }}" target="_blank" class="btn btn-secondary">Share as HTML</a>
+        <a href="/api/export/csv?run_ids={{ run_ids_str }}" class="btn btn-secondary">Export CSV</a>
+        <a href="/api/export/json?run_ids={{ run_ids_str }}" class="btn btn-secondary">Export JSON</a>
+    </div>
+</div>
+
+<div id="configMode" style="display:none">
+    <div id="configContent"></div>
+</div>
+
+<div class="tc-modal-overlay" id="toolModalOverlay" style="display:none" onclick="if(event.target===this)closeToolModal()"></div>
+<script src="/static/js/grading.js"></script>
+<script src="/static/js/dashboard.js"></script>
+<script>
+    const runIds = {{ run_ids | tojson }};
+    loadCompareGrading(runIds);
+    loadCompareDashboard(runIds);
+
+    // Show run labels + load configs
+    async function showLabels() {
+        const labels = [];
+        for (const id of runIds) {
+            const run = await fetch(`/api/runs/${id}`).then(r => r.json());
+            labels.push(run.label);
+        }
+        document.getElementById('runLabels').innerHTML = labels.join(' &bull; ');
+    }
+    showLabels();
+    loadCompareConfigs(runIds);
+
+    function switchMode(mode, btn) {
+        document.querySelectorAll('.mode-pill').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('gradingMode').style.display = mode === 'grading' ? 'block' : 'none';
+        document.getElementById('dashboardMode').style.display = mode === 'dashboard' ? 'block' : 'none';
+        document.getElementById('configMode').style.display = mode === 'config' ? 'block' : 'none';
+    }
+</script>
+{% else %}
+<div class="section">
+    <p>Select runs to compare from the <a href="/">Runs</a> page using the checkboxes, then click "Compare Selected".</p>
+</div>
+{% endif %}
+{% endblock %}

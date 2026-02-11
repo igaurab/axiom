@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Dataset Detail — Benchmark App{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/suites" class="back-link">&larr; Back to Datasets</a>
+        <h1 id="suiteName"></h1>
+        <div class="tag-chips" id="suiteTags"></div>
+    </div>
+</div>
+
+<div class="section">
+    <h2>Import Queries from CSV</h2>
+    <p class="text-muted text-sm">Format: id, query_type, query, answer, comments, function_status</p>
+    <form id="importForm" onsubmit="return importCSV(event)" style="display:flex;gap:1rem;align-items:end;margin-top:0.75rem">
+        <input type="file" id="csvFile" accept=".csv" class="form-control" style="max-width:300px">
+        <button type="submit" class="btn btn-primary">Upload</button>
+    </form>
+    <div id="importResult" class="text-sm" style="margin-top:0.5rem"></div>
+</div>
+
+<div class="section">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+        <h2>Queries</h2>
+        <button class="btn btn-sm btn-primary" onclick="showAddQuery()">+ Add Query</button>
+    </div>
+    <div style="overflow-x:auto">
+    <table class="data-table" id="queriesTable">
+        <thead>
+            <tr><th>#</th><th>Type</th><th>Query</th><th>Expected Answer</th><th>Comments</th><th>Fn Status</th></tr>
+        </thead>
+        <tbody id="queriesBody"></tbody>
+    </table>
+    </div>
+</div>
+
+<!-- Add Query Modal -->
+<div class="modal-overlay" id="queryModal" style="display:none">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3>Add Query</h3>
+            <button class="modal-close" onclick="document.getElementById('queryModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="return addQuery(event)">
+            <div class="form-group">
+                <label>Query Type</label>
+                <input type="text" id="qType" class="form-control" placeholder="e.g. archive_driven">
+            </div>
+            <div class="form-group">
+                <label>Query Text</label>
+                <textarea id="qText" class="form-control" rows="3" required></textarea>
+            </div>
+            <div class="form-group">
+                <label>Expected Answer</label>
+                <textarea id="qAnswer" class="form-control" rows="3" required></textarea>
+            </div>
+            <div class="form-group">
+                <label>Comments</label>
+                <input type="text" id="qComments" class="form-control">
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Add</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+const suiteId = {{ suite_id }};
+
+async function loadSuite() {
+    const s = await fetch(`/api/suites/${suiteId}`).then(r => r.json());
+    document.getElementById('suiteName').textContent = s.name;
+    document.getElementById('suiteTags').innerHTML = (s.tags || []).map(t => `<span class="tag-chip">${t}</span>`).join('');
+    const tbody = document.getElementById('queriesBody');
+    tbody.innerHTML = '';
+    (s.queries || []).forEach(q => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${q.ordinal}</td><td><span class="type-badge">${q.query_type || ''}</span></td><td title="${q.query_text.replace(/"/g, '&quot;')}">${q.query_text.substring(0, 100)}${q.query_text.length > 100 ? '...' : ''}</td><td title="${q.expected_answer.replace(/"/g, '&quot;')}">${q.expected_answer.substring(0, 80)}${q.expected_answer.length > 80 ? '...' : ''}</td><td>${q.comments || ''}</td><td>${q.function_status || ''}</td>`;
+        tbody.appendChild(tr);
+    });
+}
+
+async function importCSV(e) {
+    e.preventDefault();
+    const file = document.getElementById('csvFile').files[0];
+    if (!file) return false;
+    const form = new FormData();
+    form.append('file', file);
+    const resp = await fetch(`/api/suites/${suiteId}/import-csv`, { method: 'POST', body: form });
+    const data = await resp.json();
+    document.getElementById('importResult').textContent = resp.ok ? `Imported ${data.imported} queries` : (data.detail || 'Error');
+    if (resp.ok) loadSuite();
+    return false;
+}
+
+function showAddQuery() {
+    document.getElementById('queryModal').style.display = 'flex';
+}
+
+async function addQuery(e) {
+    e.preventDefault();
+    const body = {
+        query_type: document.getElementById('qType').value || null,
+        query_text: document.getElementById('qText').value,
+        expected_answer: document.getElementById('qAnswer').value,
+        comments: document.getElementById('qComments').value || null,
+    };
+    await fetch(`/api/suites/${suiteId}/queries`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+    });
+    document.getElementById('queryModal').style.display = 'none';
+    loadSuite();
+    return false;
+}
+
+loadSuite();
+</script>
+{% endblock %}

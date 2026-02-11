@@ -1,0 +1,434 @@
+"use client";
+
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { ResultOut, RunDetailOut, GradeValue, ToolCall } from "@/lib/types";
+import { resultsApi } from "@/lib/api/results";
+import { runsApi } from "@/lib/api/runs";
+import { gradesApi } from "@/lib/api/grades";
+import { GradeSummary, computeGradeGroups, computeCompareGradeGroups } from "./grade-summary";
+import { GradingCard } from "./grading-card";
+import { CompareCard } from "./compare-card";
+import { QueryNav, buildQueryNavItems, buildSingleRunNavItems } from "./query-nav";
+import { ToolModal } from "@/components/tool-calls/tool-modal";
+import { RefreshCw } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+interface SingleProps {
+  runId: number;
+  compare?: false;
+}
+
+interface CompareProps {
+  runIds: number[];
+  compare: true;
+}
+
+type Props = SingleProps | CompareProps;
+
+interface ToolModalState {
+  toolCalls: ToolCall[];
+  idx: number;
+  queryLabel: string;
+  runLabel: string;
+}
+
+interface GradingData {
+  runs: RunDetailOut[];
+  results: Record<number, ResultOut[]>;
+}
+
+// --- localStorage cache helpers ---
+function cacheKey(runIds: number[]) {
+  return `grading-${runIds.join(",")}`;
+}
+
+function loadCache(runIds: number[]): GradingData | undefined {
+  try {
+    const raw = localStorage.getItem(cacheKey(runIds));
+    if (!raw) return undefined;
+    return JSON.parse(raw) as GradingData;
+  } catch {
+    return undefined;
+  }
+}
+
+function saveCache(runIds: number[], data: GradingData) {
+  try {
+    localStorage.setItem(cacheKey(runIds), JSON.stringify(data));
+  } catch {
+    // quota exceeded — silently ignore
+  }
+}
+
+export function GradingView(props: Props) {
+  const isCompare = "compare" in props && props.compare;
+  const runIds = isCompare ? props.runIds : [props.runId];
+  const queryClient = useQueryClient();
+
+  const [toolModal, setToolModal] = useState<ToolModalState | null>(null);
+  const cardRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const [lastFullyGradedQuery, setLastFullyGradedQuery] = useState<number | null>(null);
+  const [activeQueryId, setActiveQueryId] = useState<number | null>(null);
+  const visibleQueries = useRef<Set<number>>(new Set());
+  const isNavigating = useRef(false);
+  const navTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  // Fetch all results and runs — data lives in React Query cache
+  const qKey = ["grading", runIds.join(",")];
+  const { data, isLoading, isFetching, isError } = useQuery<GradingData>({
+    queryKey: qKey,
+    queryFn: async () => {
+      const fetchedRuns: RunDetailOut[] = [];
+      const fetchedResults: Record<number, ResultOut[]> = {};
+      await Promise.all(runIds.map(async (id) => {
+        const [run, res] = await Promise.all([runsApi.get(id), resultsApi.list(id)]);
+        fetchedRuns.push(run);
+        fetchedResults[id] = res;
+      }));
+      // Sort runs to match runIds order
+      const runMap = Object.fromEntries(fetchedRuns.map((r) => [r.id, r]));
+      const orderedRuns = runIds.map((id) => runMap[id]).filter(Boolean);
+      const result = { runs: orderedRuns, results: fetchedResults };
+      saveCache(runIds, result);
+      return result;
+    },
+    placeholderData: () => loadCache(runIds),
+    staleTime: 30_000, // keep fresh for 30s before background refetch
+  });
+
+  const runs = data?.runs ?? [];
+  const results = data?.results ?? {};
+
+  const gradeMutation = useMutation({
+    mutationFn: ({ resultId, grade }: { resultId: number; grade: GradeValue }) =>
+      gradesApi.upsert(resultId, { grade }),
+    onSuccess: (gradeOut, { resultId }) => {
+      // Optimistic update in React Query cache
+      queryClient.setQueryData<GradingData>(qKey, (prev) => {
+        if (!prev) return prev;
+        const nextResults = { ...prev.results };
+        for (const rid of runIds) {
+          nextResults[rid] = (nextResults[rid] || []).map((r) =>
+            r.id === resultId ? { ...r, grade: gradeOut } : r
+          );
+        }
+        const updated = { ...prev, results: nextResults };
+        saveCache(runIds, updated);
+        return updated;
+      });
+    },
+  });
+
+  const handleGrade = useCallback(
+    (resultId: number, grade: GradeValue, queryId?: number) => {
+      gradeMutation.mutate({ resultId, grade }, {
+        onSuccess: () => {
+          if (queryId != null && isCompare) {
+            setTimeout(() => setLastFullyGradedQuery(queryId), 0);
+          }
+        },
+      });
+    },
+    [gradeMutation, isCompare]
+  );
+
+  const handleOpenToolModal = useCallback(
+    (resultId: number, idx: number, runLabel?: string) => {
+      for (const rid of runIds) {
+        const r = results[rid]?.find((res) => res.id === resultId);
+        if (r?.tool_calls?.length) {
+          setToolModal({
+            toolCalls: r.tool_calls,
+            idx,
+            queryLabel: `Q${r.query?.ordinal || r.query_id}`,
+            runLabel: runLabel || "",
+          });
+          return;
+        }
+      }
+    },
+    [runIds, results]
+  );
+
+  // Compute data for compare mode
+  const { allResults, queryIds: compareQueryIds } = useMemo(() => {
+    if (!isCompare) return { allResults: {} as Record<number, Record<number, ResultOut>>, queryIds: [] as number[] };
+    const all: Record<number, Record<number, ResultOut>> = {};
+    for (const rid of runIds) {
+      (results[rid] || []).forEach((r) => {
+        if (!all[r.query_id]) all[r.query_id] = {};
+        all[r.query_id][rid] = r;
+      });
+    }
+    const qids = Object.keys(all).map(Number).sort((a, b) => a - b);
+    return { allResults: all, queryIds: qids };
+  }, [isCompare, runIds, results]);
+
+  // Sorted results and query IDs for single-run mode
+  const singleSortedResults = useMemo(() => {
+    if (isCompare) return [];
+    return (results[runIds[0]] || []).slice().sort((a, b) => a.query_id - b.query_id);
+  }, [isCompare, results, runIds]);
+
+  const singleQueryIds = useMemo(() => singleSortedResults.map((r) => r.query_id), [singleSortedResults]);
+
+  // Unified queryIds for both modes
+  const queryIds = isCompare ? compareQueryIds : singleQueryIds;
+
+  // Auto-scroll to next ungraded query card (compare mode only)
+  useEffect(() => {
+    if (lastFullyGradedQuery == null || !isCompare) return;
+    setLastFullyGradedQuery(null);
+
+    const qResults = allResults[lastFullyGradedQuery];
+    if (!qResults) return;
+    const allGraded = runIds.every((rid) => qResults[rid]?.grade?.grade);
+    if (!allGraded) return;
+
+    const idx = compareQueryIds.indexOf(lastFullyGradedQuery);
+    for (let i = idx + 1; i < compareQueryIds.length; i++) {
+      const nextQid = compareQueryIds[i];
+      const nextResults = allResults[nextQid];
+      if (!nextResults) continue;
+      const hasUngraded = runIds.some((rid) => !nextResults[rid]?.grade?.grade);
+      if (hasUngraded) {
+        const el = cardRefs.current[nextQid];
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        return;
+      }
+    }
+  }, [lastFullyGradedQuery, isCompare, allResults, runIds, compareQueryIds]);
+
+  // IntersectionObserver to track visible query card
+  useEffect(() => {
+    if (queryIds.length === 0) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (isNavigating.current) return; // skip during click-navigation
+        entries.forEach((entry) => {
+          const qid = Number(entry.target.getAttribute("data-query-id"));
+          if (isNaN(qid)) return;
+          if (entry.isIntersecting) {
+            visibleQueries.current.add(qid);
+          } else {
+            visibleQueries.current.delete(qid);
+          }
+        });
+        const visible = [...visibleQueries.current].filter((q) => queryIds.includes(q));
+        if (visible.length > 0) {
+          visible.sort((a, b) => queryIds.indexOf(a) - queryIds.indexOf(b));
+          setActiveQueryId(visible[0]);
+        }
+      },
+      { rootMargin: "-80px 0px -50% 0px", threshold: 0 }
+    );
+
+    Object.entries(cardRefs.current).forEach(([qidStr, el]) => {
+      if (el) {
+        el.setAttribute("data-query-id", qidStr);
+        observer.observe(el);
+      }
+    });
+
+    return () => observer.disconnect();
+  }, [queryIds]);
+
+  const queryNavItems = useMemo(() => {
+    if (isCompare) return buildQueryNavItems(compareQueryIds, allResults, runIds);
+    return buildSingleRunNavItems(singleSortedResults);
+  }, [isCompare, compareQueryIds, allResults, runIds, singleSortedResults]);
+
+  const handleNavNavigate = useCallback((queryId: number) => {
+    // Immediately jump the sidebar highlight — lock observer so intermediate cards don't flicker
+    setActiveQueryId(queryId);
+    isNavigating.current = true;
+    clearTimeout(navTimer.current);
+
+    const el = cardRefs.current[queryId];
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    // Unlock observer after scroll settles
+    navTimer.current = setTimeout(() => {
+      isNavigating.current = false;
+    }, 800);
+  }, []);
+
+  // Grade summary
+  const gradeGroups = useMemo(() => {
+    if (isCompare) {
+      return computeCompareGradeGroups(allResults, runs, queryIds);
+    }
+    const runResults = results[runIds[0]] || [];
+    return computeGradeGroups(runResults, runs[0]?.label || "Results");
+  }, [isCompare, allResults, runs, queryIds, results, runIds]);
+
+  const totalResults = isCompare
+    ? queryIds.length * runs.length
+    : (results[runIds[0]] || []).length;
+  const graded = gradeGroups.reduce((sum, g) => sum + g.correct + g.partial + g.wrong, 0);
+  const pct = totalResults ? Math.round((graded / totalResults) * 100) : 0;
+
+  const handleSync = () => {
+    queryClient.invalidateQueries({ queryKey: qKey });
+  };
+
+  // --- Skeleton loading ---
+  if (isLoading && !data) {
+    return <GradingSkeleton cardCount={isCompare ? 4 : 6} />;
+  }
+
+  // --- Error state ---
+  if (isError && !data) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-destructive font-medium mb-2">Failed to load results</p>
+        <button onClick={handleSync} className="text-sm text-primary hover:underline">Try again</button>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {queryNavItems.length > 0 && (
+        <QueryNav
+          items={queryNavItems}
+          activeQueryId={activeQueryId}
+          onNavigate={handleNavNavigate}
+        />
+      )}
+
+      {/* Progress + sync */}
+      <div className="flex items-center justify-center gap-3 text-sm text-muted mb-4">
+        <span>
+          {graded}/{totalResults} graded
+          <span className="inline-block w-48 h-2 bg-border rounded-full mx-2 align-middle">
+            <span className="block h-full bg-brand rounded-full transition-all" style={{ width: `${pct}%` }} />
+          </span>
+          {pct}%
+        </span>
+        <button
+          onClick={handleSync}
+          title="Refresh data from server"
+          className={cn(
+            "p-1.5 rounded-lg text-muted-light hover:text-primary hover:bg-primary/10 transition-colors",
+            isFetching && "animate-spin-slow"
+          )}
+        >
+          <RefreshCw size={14} />
+        </button>
+      </div>
+
+      <GradeSummary groups={gradeGroups} />
+
+      {isCompare ? (
+        queryIds.map((qid) => {
+          const firstResult = Object.values(allResults[qid])[0];
+          return (
+            <div key={qid} ref={(el) => { cardRefs.current[qid] = el; }} className="scroll-mt-20">
+              <CompareCard
+                queryId={qid}
+                query={firstResult?.query || { id: qid, suite_id: 0, ordinal: qid, tag: null, query_text: "", expected_answer: "", comments: null }}
+                runs={runs}
+                resultsByRun={allResults[qid]}
+                onGrade={handleGrade}
+                onOpenToolModal={(resultId, idx, runLabel) => handleOpenToolModal(resultId, idx, runLabel)}
+              />
+            </div>
+          );
+        })
+      ) : (
+        singleSortedResults.map((r) => (
+            <div key={r.id} ref={(el) => { cardRefs.current[r.query_id] = el; }} className="scroll-mt-20">
+              <GradingCard
+                result={r}
+                onGrade={handleGrade}
+                onOpenToolModal={handleOpenToolModal}
+              />
+            </div>
+          ))
+      )}
+
+      {toolModal && (
+        <ToolModal
+          toolCalls={toolModal.toolCalls}
+          initialIdx={toolModal.idx}
+          queryLabel={toolModal.queryLabel}
+          runLabel={toolModal.runLabel}
+          onClose={() => setToolModal(null)}
+        />
+      )}
+    </>
+  );
+}
+
+// --- Skeleton component ---
+function GradingSkeleton({ cardCount }: { cardCount: number }) {
+  return (
+    <div>
+      {/* Progress bar skeleton */}
+      <div className="flex items-center justify-center gap-3 mb-4">
+        <div className="skeleton h-4 w-32" />
+        <div className="skeleton h-2 w-48 rounded-full" />
+        <div className="skeleton h-4 w-8" />
+      </div>
+
+      {/* Grade summary skeleton */}
+      <div className="bg-card rounded-xl px-8 py-4 mb-6 shadow-sm flex justify-center gap-6">
+        {[...Array(3)].map((_, i) => (
+          <div key={i} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--surface)]">
+            <div className="skeleton h-4 w-20" />
+            <div className="skeleton h-5 w-7 rounded-xl" />
+            <div className="skeleton h-5 w-7 rounded-xl" />
+            <div className="skeleton h-5 w-7 rounded-xl" />
+            <div className="skeleton h-5 w-7 rounded-xl" />
+          </div>
+        ))}
+      </div>
+
+      {/* Card skeletons */}
+      {[...Array(cardCount)].map((_, i) => (
+        <div key={i} className="bg-card rounded-xl p-6 px-8 mb-6 shadow-sm">
+          {/* Header */}
+          <div className="border-b-2 border-border pb-3 mb-4">
+            <div className="skeleton h-5 w-32" />
+          </div>
+          {/* Query text */}
+          <div className="p-3 bg-[var(--surface)] rounded-lg border-l-4 border-brand/30 mb-4 space-y-2">
+            <div className="skeleton h-3 w-full" />
+            <div className="skeleton h-3 w-3/4" />
+          </div>
+          {/* Expected answer */}
+          <div className="mb-4 space-y-2">
+            <div className="skeleton h-3 w-24" />
+            <div className="skeleton h-3 w-2/3" />
+          </div>
+          {/* Tab bar */}
+          <div className="flex bg-[var(--surface-hover)] rounded-t-lg gap-1 px-2 py-2">
+            {[...Array(3)].map((_, j) => (
+              <div key={j} className="skeleton h-6 w-24 rounded" />
+            ))}
+          </div>
+          {/* Content */}
+          <div className="p-4 space-y-3">
+            <div className="bg-[var(--surface)] border-2 border-border rounded-lg p-4 space-y-2">
+              <div className="skeleton h-3 w-full" />
+              <div className="skeleton h-3 w-5/6" />
+              <div className="skeleton h-3 w-4/6" />
+            </div>
+            <div className="flex gap-2">
+              <div className="skeleton h-8 w-20 rounded-lg" />
+              <div className="skeleton h-8 w-20 rounded-lg" />
+              <div className="skeleton h-8 w-20 rounded-lg" />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}

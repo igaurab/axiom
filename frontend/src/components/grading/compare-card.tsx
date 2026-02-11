@@ -1,0 +1,153 @@
+"use client";
+
+import { useState, useCallback } from "react";
+import type { ResultOut, RunDetailOut, GradeValue, QueryOut } from "@/lib/types";
+import { MarkdownRenderer } from "@/components/markdown/markdown-renderer";
+import { GradeButton } from "./grade-button";
+import { ReasoningDisplay } from "./reasoning-display";
+import { ToolPills } from "@/components/tool-calls/tool-pills";
+import { cn } from "@/lib/utils";
+
+interface Props {
+  queryId: number;
+  query: QueryOut;
+  runs: RunDetailOut[];
+  resultsByRun: Record<number, ResultOut>;
+  onGrade: (resultId: number, grade: GradeValue, queryId: number, tabIdx: number) => void;
+  onOpenToolModal: (resultId: number, idx: number, runLabel: string) => void;
+}
+
+const borderColors: Record<string, string> = {
+  correct: "border-grade-correct-border bg-grade-correct-bg",
+  partial: "border-grade-partial-border bg-grade-partial-bg",
+  wrong: "border-grade-wrong-border bg-grade-wrong-bg",
+};
+
+const dotColors: Record<string, string> = {
+  correct: "bg-green-500",
+  partial: "bg-yellow-400",
+  wrong: "bg-red-500",
+  not_graded: "bg-muted-light",
+};
+
+export function CompareCard({ queryId, query, runs, resultsByRun, onGrade, onOpenToolModal }: Props) {
+  const [activeTab, setActiveTab] = useState(0);
+
+  const handleAutoAdvance = useCallback((tabIdx: number) => {
+    if (tabIdx + 1 < runs.length) {
+      setActiveTab(tabIdx + 1);
+    }
+  }, [runs.length]);
+
+  return (
+    <div className="bg-card rounded-xl p-6 px-8 mb-6 shadow-sm">
+      {/* Header */}
+      <div className="border-b-2 border-border pb-3 mb-4">
+        <span className="text-lg font-bold">
+          Query #{query.ordinal || queryId}
+          {query.tag && (
+            <span className="ml-2 inline-block px-2 py-0.5 rounded-xl text-xs font-semibold bg-[var(--tag-blue-bg)] text-[var(--tag-blue-text)]">
+              {query.tag}
+            </span>
+          )}
+        </span>
+      </div>
+
+      {/* Query text */}
+      <div className="text-base p-3 bg-[var(--surface)] rounded-lg border-l-4 border-brand mb-4">
+        <MarkdownRenderer content={query.query_text || ""} />
+      </div>
+
+      {/* Expected answer */}
+      <div className="mb-4">
+        <h4 className="text-muted text-sm font-semibold mb-2">Expected Answer</h4>
+        <MarkdownRenderer content={query.expected_answer || ""} />
+        {query.comments && (
+          <div className="mt-2 px-3 py-1.5 bg-[var(--tag-orange-bg)] border-l-[3px] border-warning rounded text-sm text-[var(--tag-orange-text)]">
+            <strong>Note:</strong> {query.comments}
+          </div>
+        )}
+      </div>
+
+      {/* Tab bar */}
+      <div className="flex bg-[var(--surface-hover)] border-b-2 border-border rounded-t-lg overflow-x-auto">
+        {runs.map((run, idx) => {
+          const r = resultsByRun[run.id];
+          const grade = r?.grade?.grade || "not_graded";
+          return (
+            <button
+              key={run.id}
+              className={cn(
+                "px-4 py-2.5 font-semibold text-sm text-muted border-b-[3px] border-transparent -mb-[2px] whitespace-nowrap transition-colors",
+                idx === activeTab
+                  ? "text-foreground bg-card border-b-brand"
+                  : "hover:bg-[var(--surface)] hover:text-foreground"
+              )}
+              onClick={() => setActiveTab(idx)}
+            >
+              {run.label}
+              <span className={cn("w-2.5 h-2.5 rounded-full inline-block ml-1.5", dotColors[grade])} />
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Tab panels */}
+      {runs.map((run, idx) => {
+        const r = resultsByRun[run.id];
+        if (idx !== activeTab) return null;
+        if (!r) {
+          return (
+            <div key={run.id} className="p-4 text-muted-light italic">No data for this query</div>
+          );
+        }
+        const grade = r.grade?.grade || "";
+        const tokens = r.usage?.total_tokens ? r.usage.total_tokens.toLocaleString() : "N/A";
+        const time = r.execution_time_seconds ? r.execution_time_seconds.toFixed(1) + "s" : "N/A";
+
+        return (
+          <div key={run.id} className="p-4">
+            <div
+              className={cn(
+                "bg-[var(--surface)] border-2 border-border rounded-lg p-4 mb-3 max-h-[400px] overflow-y-auto whitespace-pre-wrap text-sm",
+                grade && borderColors[grade]
+              )}
+            >
+              {r.error ? (
+                <div className="text-destructive font-semibold">ERROR: {r.error}</div>
+              ) : (
+                <MarkdownRenderer content={r.agent_response || "N/A"} />
+              )}
+            </div>
+
+            <div className="flex gap-2 mt-3">
+              {(["correct", "partial", "wrong"] as GradeValue[]).map((g) => (
+                <GradeButton
+                  key={g}
+                  grade={g}
+                  active={grade === g}
+                  onClick={() => {
+                    onGrade(r.id, g, queryId, idx);
+                    handleAutoAdvance(idx);
+                  }}
+                />
+              ))}
+            </div>
+
+            <div className="mt-3 pt-3 border-t border-border text-sm text-muted flex gap-6 flex-wrap">
+              <span><strong>Time:</strong> {time}</span>
+              <span><strong>Tokens:</strong> {tokens}</span>
+              <span><strong>Tool Calls:</strong> {(r.tool_calls || []).length}</span>
+            </div>
+
+            <ToolPills
+              toolCalls={r.tool_calls}
+              onClickTool={(i) => onOpenToolModal(r.id, i, run.label)}
+            />
+            <ReasoningDisplay reasoning={r.reasoning} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}

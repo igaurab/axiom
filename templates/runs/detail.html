@@ -1,0 +1,372 @@
+{% extends "base.html" %}
+{% block title %}{{ run.label }} — Benchmark App{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/" class="back-link">&larr; Back</a>
+        <h1>{{ run.label }} <span class="status-{{ run.status }}">{{ run.status }}</span></h1>
+        <div class="tag-chips">
+            {% for t in run.tags %}<span class="tag-chip">{{ t }}</span>{% endfor %}
+        </div>
+    </div>
+    <div class="run-actions-wrap">
+        <button class="run-actions-btn" onclick="toggleActionsMenu(event)">&#8943;</button>
+        <div class="run-actions-menu" id="actionsMenu">
+            <button class="run-actions-item" onclick="closeActionsMenu();rerunThis()">
+                <span class="run-actions-icon">&#8635;</span> Rerun
+            </button>
+            <button class="run-actions-item run-actions-danger" onclick="closeActionsMenu();showDeleteModal()">
+                <span class="run-actions-icon">&#10005;</span> Delete
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Rerun modal -->
+<div class="rerun-modal-overlay" id="rerunOverlay" style="display:none" onclick="if(event.target===this)closeRerunModal()">
+    <div class="rerun-modal">
+        <div class="rerun-modal-header">
+            <h3>Rerun</h3>
+            <button class="rerun-modal-close" onclick="closeRerunModal()">&times;</button>
+        </div>
+        <div class="rerun-modal-body" id="rerunBody">
+            <div class="form-group">
+                <label>Label</label>
+                <input type="text" id="rerunLabel" class="form-control" value="{{ run.label }} (rerun)">
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Repeat</label>
+                    <input type="number" id="rerunRepeat" class="form-control" min="1" max="10" value="{{ group_runs|length if group_runs|length > 1 else 1 }}">
+                </div>
+                <div class="form-group">
+                    <label>Batch Size</label>
+                    <select id="rerunBatch" class="form-control">
+                        <option value="5" {{ 'selected' if run.batch_size == 5 }}>5</option>
+                        <option value="10" {{ 'selected' if run.batch_size == 10 }}>10</option>
+                        <option value="15" {{ 'selected' if run.batch_size == 15 }}>15</option>
+                        <option value="20" {{ 'selected' if run.batch_size == 20 }}>20</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Queries <span class="text-muted text-sm" id="rerunQueryCount"></span></label>
+                <div class="rerun-query-list" id="rerunQueryList">
+                    <span class="text-muted">Loading queries...</span>
+                </div>
+            </div>
+        </div>
+        <div class="rerun-modal-footer">
+            <button class="btn btn-secondary" onclick="closeRerunModal()">Cancel</button>
+            <button class="btn btn-primary" id="rerunStartBtn" onclick="submitRerun()">Start Rerun</button>
+        </div>
+    </div>
+</div>
+
+<!-- Delete modal -->
+<div class="rerun-modal-overlay" id="deleteOverlay" style="display:none" onclick="if(event.target===this)closeDeleteModal()">
+    <div class="rerun-modal" style="width:420px">
+        <div class="rerun-modal-header">
+            <h3>Delete Run</h3>
+            <button class="rerun-modal-close" onclick="closeDeleteModal()">&times;</button>
+        </div>
+        <div class="rerun-modal-body">
+            {% if group_runs|length > 1 %}
+            <p style="margin-bottom:1rem">This will delete <strong>all {{ group_runs|length }} runs</strong> in this group from the database.</p>
+            {% else %}
+            <p style="margin-bottom:1rem">This will delete this run and its results from the database.</p>
+            {% endif %}
+            <label class="rerun-query-item" style="padding:0.5rem;background:#fff5f5;border:1px solid #fee;border-radius:6px">
+                <input type="checkbox" id="deleteFilesCheck">
+                <span style="color:#c82333">Also delete output files from disk</span>
+            </label>
+        </div>
+        <div class="rerun-modal-footer">
+            <button class="btn btn-secondary" onclick="closeDeleteModal()">Cancel</button>
+            <button class="btn btn-danger" id="deleteConfirmBtn" onclick="confirmDelete()">Delete</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ── Actions menu ──
+function toggleActionsMenu(e) {
+    e.stopPropagation();
+    const menu = document.getElementById('actionsMenu');
+    menu.classList.toggle('open');
+    if (menu.classList.contains('open')) {
+        document.addEventListener('click', _closeActionsOnClick, {once: true});
+    }
+}
+function _closeActionsOnClick() { closeActionsMenu(); }
+function closeActionsMenu() {
+    document.getElementById('actionsMenu').classList.remove('open');
+}
+
+// ── Rerun ──
+let _rerunQueryIds = [];
+
+async function rerunThis() {
+    document.getElementById('rerunOverlay').style.display = 'flex';
+    const runIdsToCheck = {{ group_runs|map(attribute='id')|list|tojson if group_runs|length > 1 else '[' ~ run.id ~ ']' }};
+    const firstRunId = runIdsToCheck[0];
+    const results = await fetch(`/api/results?run_id=${firstRunId}`).then(r => r.json());
+    const queryMap = {};
+    results.forEach(r => {
+        if (r.query) queryMap[r.query.id] = r.query;
+    });
+    _rerunQueryIds = Object.keys(queryMap).map(Number);
+    const queries = Object.values(queryMap).sort((a, b) => a.ordinal - b.ordinal);
+
+    const list = document.getElementById('rerunQueryList');
+    document.getElementById('rerunQueryCount').textContent = `(${queries.length} selected)`;
+    list.innerHTML = '';
+    queries.forEach(q => {
+        const label = document.createElement('label');
+        label.className = 'rerun-query-item';
+        label.innerHTML = `<input type="checkbox" value="${q.id}" checked onchange="updateRerunCount()"> <span class="rerun-q-ord">Q${q.ordinal}</span> <span class="rerun-q-text">${q.query_text.length > 80 ? q.query_text.substring(0, 80) + '...' : q.query_text}</span>`;
+        list.appendChild(label);
+    });
+}
+
+function closeRerunModal() {
+    document.getElementById('rerunOverlay').style.display = 'none';
+}
+
+function updateRerunCount() {
+    const checked = document.querySelectorAll('#rerunQueryList input:checked').length;
+    const total = document.querySelectorAll('#rerunQueryList input').length;
+    document.getElementById('rerunQueryCount').textContent = `(${checked} of ${total} selected)`;
+}
+
+async function submitRerun() {
+    const queryIds = [...document.querySelectorAll('#rerunQueryList input:checked')].map(c => parseInt(c.value));
+    if (!queryIds.length) { alert('Select at least one query'); return; }
+    const label = document.getElementById('rerunLabel').value.trim();
+    if (!label) { alert('Enter a label'); return; }
+
+    const btn = document.getElementById('rerunStartBtn');
+    btn.disabled = true;
+    btn.textContent = 'Starting...';
+
+    const body = {
+        suite_id: {{ run.suite_id }},
+        agent_config_id: {{ run.agent_config_id }},
+        label: label,
+        tags: {{ run.tags | tojson }},
+        batch_size: parseInt(document.getElementById('rerunBatch').value),
+        repeat: parseInt(document.getElementById('rerunRepeat').value) || 1,
+        query_ids: queryIds,
+    };
+    const resp = await fetch('/api/runs', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+    });
+    if (resp.ok) {
+        const runs = await resp.json();
+        window.location = `/runs/${runs[0].id}`;
+    } else {
+        btn.disabled = false;
+        btn.textContent = 'Start Rerun';
+        const err = await resp.json();
+        alert(err.detail || 'Error creating rerun');
+    }
+}
+
+// ── Delete ──
+function showDeleteModal() {
+    document.getElementById('deleteFilesCheck').checked = false;
+    document.getElementById('deleteOverlay').style.display = 'flex';
+}
+function closeDeleteModal() {
+    document.getElementById('deleteOverlay').style.display = 'none';
+}
+async function confirmDelete() {
+    const deleteFiles = document.getElementById('deleteFilesCheck').checked;
+    const btn = document.getElementById('deleteConfirmBtn');
+    btn.disabled = true;
+    btn.textContent = 'Deleting...';
+    const qs = deleteFiles ? '?delete_data=true' : '';
+    {% if group_runs|length > 1 %}
+    const ids = {{ group_runs|map(attribute='id')|list|tojson }};
+    for (const id of ids) await fetch(`/api/runs/${id}${qs}`, { method: 'DELETE' });
+    {% else %}
+    await fetch(`/api/runs/{{ run.id }}${qs}`, { method: 'DELETE' });
+    {% endif %}
+    window.location = '/';
+}
+</script>
+
+<div class="run-info">
+    <span><strong>Agent:</strong> {{ run.agent_name }}</span>
+    <span><strong>Dataset:</strong> {{ run.suite_name }}</span>
+</div>
+
+{% set is_group = group_runs|length > 1 %}
+{% set any_running = group_runs|selectattr('status', 'in', ['running', 'pending'])|list|length > 0 if is_group else (run.status in ['running', 'pending']) %}
+{% set all_done = not any_running %}
+
+{% if any_running %}
+<!-- Live progress mode -->
+<div class="section" id="progressSection">
+{% if is_group %}
+    <h3 style="margin-bottom:1rem">Group Progress ({{ group_runs|length }} runs)</h3>
+    {% for gr in group_runs %}
+    <div class="group-progress-row" id="groupRun{{ gr.id }}">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.25rem">
+            <span><strong>{{ gr.label }}</strong> <span class="status-{{ gr.status }}">{{ gr.status }}</span></span>
+            <span class="text-muted text-sm" id="progressText{{ gr.id }}">{{ gr.progress_current }}/{{ gr.progress_total }}</span>
+        </div>
+        <div class="progress-bar-lg">
+            <div class="progress-fill-lg" id="progressBar{{ gr.id }}" style="width:{{ (gr.progress_current / gr.progress_total * 100) if gr.progress_total else 0 }}%"></div>
+        </div>
+    </div>
+    {% endfor %}
+{% else %}
+    <div class="progress-info">
+        <span>Progress: <strong id="progressText">{{ run.progress_current }}/{{ run.progress_total }}</strong></span>
+        <span id="elapsedTime"></span>
+    </div>
+    <div class="progress-bar-lg">
+        <div class="progress-fill-lg" id="progressBar" style="width:{{ (run.progress_current / run.progress_total * 100) if run.progress_total else 0 }}%"></div>
+    </div>
+{% endif %}
+    <h3 style="margin:1.5rem 0 0.75rem">Live Results</h3>
+    <div id="liveResults" class="live-results"></div>
+    <div class="form-actions" style="margin-top:1rem">
+        <button class="btn btn-danger" onclick="cancelRun()">Cancel Run</button>
+    </div>
+</div>
+
+<script>
+    const runId = {{ run.id }};
+    const isGroup = {{ 'true' if is_group else 'false' }};
+    const groupRunIds = {{ group_runs|map(attribute='id')|list|tojson if is_group else '[' ~ run.id ~ ']' }};
+    const startTime = Date.now();
+
+    function updateElapsed() {
+        const el = document.getElementById('elapsedTime');
+        if (!el) return;
+        const s = Math.floor((Date.now() - startTime) / 1000);
+        el.textContent = `elapsed: ${Math.floor(s/60)}m${s%60}s`;
+    }
+    setInterval(updateElapsed, 1000);
+
+    // Set up SSE for each run in the group
+    let completedCount = 0;
+    groupRunIds.forEach(rid => {
+        const es = new EventSource(`/api/runs/${rid}/stream`);
+        es.addEventListener('progress', (e) => {
+            const d = JSON.parse(e.data);
+            if (isGroup) {
+                const txt = document.getElementById(`progressText${rid}`);
+                if (txt) txt.textContent = `${d.current}/${d.total}`;
+                const bar = document.getElementById(`progressBar${rid}`);
+                if (bar) bar.style.width = `${(d.current/d.total*100).toFixed(0)}%`;
+            } else {
+                document.getElementById('progressText').textContent = `${d.current}/${d.total}`;
+                document.getElementById('progressBar').style.width = `${(d.current/d.total*100).toFixed(0)}%`;
+            }
+            const icon = d.success ? '✓' : '✗';
+            const cls = d.success ? 'result-success' : 'result-error';
+            const row = document.createElement('div');
+            const runLabel = isGroup ? `[Run ${groupRunIds.indexOf(rid)+1}] ` : '';
+            row.className = `live-result-row ${cls}`;
+            row.innerHTML = `<span>${runLabel}Q${d.query_ordinal} ${icon} ${d.time ? d.time.toFixed(1)+'s' : ''}</span> <span class="query-preview">${d.query_text}</span>`;
+            document.getElementById('liveResults').prepend(row);
+        });
+        es.addEventListener('complete', () => {
+            es.close();
+            completedCount++;
+            if (completedCount >= groupRunIds.length) window.location.reload();
+        });
+        es.addEventListener('error', () => { es.close(); });
+    });
+
+    async function cancelRun() {
+        if (!confirm('Cancel this run?')) return;
+        for (const rid of groupRunIds) {
+            await fetch(`/api/runs/${rid}/cancel`, {method: 'POST'});
+        }
+        window.location.reload();
+    }
+</script>
+
+{% else %}
+<!-- Completed mode: grading + dashboard + config -->
+<div class="mode-switcher" id="modeSwitcher">
+    <button class="mode-pill active" onclick="switchMode('grading', this)">Grading</button>
+    <button class="mode-pill" onclick="switchMode('dashboard', this)">Dashboard</button>
+    <button class="mode-pill" onclick="switchMode('config', this)">Config</button>
+</div>
+<div class="grading-progress" id="gradingProgress"></div>
+
+<div id="gradingMode">
+    <div class="grade-summary" id="gradeSummary"></div>
+    <div id="queryCards"></div>
+    <div class="export-bar">
+        {% if is_group %}
+        <a href="/api/export/html?run_ids={{ group_runs|map(attribute='id')|join(',') }}" target="_blank" class="btn btn-secondary">Share as HTML</a>
+        <a href="/api/export/csv?run_ids={{ group_runs|map(attribute='id')|join(',') }}" class="btn btn-secondary">Export CSV</a>
+        <a href="/api/export/json?run_ids={{ group_runs|map(attribute='id')|join(',') }}" class="btn btn-secondary">Export JSON</a>
+        {% else %}
+        <a href="/api/export/html?run_ids={{ run.id }}" target="_blank" class="btn btn-secondary">Share as HTML</a>
+        <a href="/api/export/csv?run_ids={{ run.id }}" class="btn btn-secondary">Export CSV</a>
+        <a href="/api/export/json?run_ids={{ run.id }}" class="btn btn-secondary">Export JSON</a>
+        {% endif %}
+    </div>
+</div>
+
+<div id="dashboardMode" style="display:none">
+    <div id="dashboardContent"></div>
+    <div class="export-bar">
+        {% if is_group %}
+        <a href="/api/export/html?run_ids={{ group_runs|map(attribute='id')|join(',') }}" target="_blank" class="btn btn-secondary">Share as HTML</a>
+        <a href="/api/export/csv?run_ids={{ group_runs|map(attribute='id')|join(',') }}" class="btn btn-secondary">Export CSV</a>
+        <a href="/api/export/json?run_ids={{ group_runs|map(attribute='id')|join(',') }}" class="btn btn-secondary">Export JSON</a>
+        {% else %}
+        <a href="/api/export/html?run_ids={{ run.id }}" target="_blank" class="btn btn-secondary">Share as HTML</a>
+        <a href="/api/export/csv?run_ids={{ run.id }}" class="btn btn-secondary">Export CSV</a>
+        <a href="/api/export/json?run_ids={{ run.id }}" class="btn btn-secondary">Export JSON</a>
+        {% endif %}
+    </div>
+</div>
+
+<div id="configMode" style="display:none">
+    <div id="configContent"></div>
+</div>
+
+<div class="tc-modal-overlay" id="toolModalOverlay" style="display:none" onclick="if(event.target===this)closeToolModal()"></div>
+<script src="/static/js/grading.js"></script>
+<script src="/static/js/dashboard.js"></script>
+<script>
+    const runId = {{ run.id }};
+    const isGroup = {{ 'true' if is_group else 'false' }};
+    const groupRunIds = {{ group_runs|map(attribute='id')|list|tojson if is_group else '[' ~ run.id ~ ']' }};
+    const _runConfig = {
+        run: {{ run | tojson }},
+        agent: {{ agent_config | tojson }},
+        suite: {{ suite_info | tojson }},
+        groupSize: {{ group_runs|length }},
+    };
+
+    if (isGroup) {
+        loadCompareGrading(groupRunIds);
+        loadCompareDashboard(groupRunIds);
+    } else {
+        loadGrading(runId);
+        loadDashboard(runId);
+    }
+    renderRunConfig(_runConfig);
+
+    function switchMode(mode, btn) {
+        document.querySelectorAll('.mode-pill').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('gradingMode').style.display = mode === 'grading' ? 'block' : 'none';
+        document.getElementById('dashboardMode').style.display = mode === 'dashboard' ? 'block' : 'none';
+        document.getElementById('configMode').style.display = mode === 'config' ? 'block' : 'none';
+    }
+</script>
+{% endif %}
+{% endblock %}

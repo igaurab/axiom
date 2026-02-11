@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Benchmark App{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/main.css">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-left">
+            <a href="/" class="nav-brand">BENCHMARK APP</a>
+            <a href="/" class="nav-link {% if active == 'runs' %}active{% endif %}">Runs</a>
+            <a href="/suites" class="nav-link {% if active == 'suites' %}active{% endif %}">Datasets</a>
+            <a href="/agents" class="nav-link {% if active == 'agents' %}active{% endif %}">Agents</a>
+            <a href="/compare" class="nav-link {% if active == 'compare' %}active{% endif %}">Compare</a>
+        </div>
+        <div class="nav-right">
+            <label class="tag-filter-label">tag:</label>
+            <select id="globalTagFilter" class="tag-filter-select" onchange="applyTagFilter(this.value)">
+                <option value="">all</option>
+            </select>
+        </div>
+    </nav>
+    <main class="main-content">
+        {% block content %}{% endblock %}
+    </main>
+    <script>
+        // Global tag filter
+        async function loadTags() {
+            const select = document.getElementById('globalTagFilter');
+            const tags = new Set();
+            try {
+                const [suites, agents, runs] = await Promise.all([
+                    fetch('/api/suites').then(r => r.json()),
+                    fetch('/api/agents').then(r => r.json()),
+                    fetch('/api/runs').then(r => r.json()),
+                ]);
+                [...suites, ...agents, ...runs].forEach(item => {
+                    (item.tags || []).forEach(t => tags.add(t));
+                });
+                [...tags].sort().forEach(t => {
+                    const opt = document.createElement('option');
+                    opt.value = t;
+                    opt.textContent = t;
+                    if (new URLSearchParams(location.search).get('tag') === t) opt.selected = true;
+                    select.appendChild(opt);
+                });
+            } catch(e) {}
+        }
+        function applyTagFilter(tag) {
+            const url = new URL(window.location);
+            if (tag) url.searchParams.set('tag', tag);
+            else url.searchParams.delete('tag');
+            window.location = url.toString();
+        }
+        loadTags();
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

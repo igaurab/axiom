@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+{% block title %}Agents — Benchmark App{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Agent Configurations</h1>
+    <button class="btn btn-primary" onclick="showCreate()">+ New Agent</button>
+</div>
+
+<div id="agentsList"></div>
+
+<!-- Agent Detail / Edit Panel -->
+<div class="modal-overlay" id="agentModal" style="display:none">
+    <div class="modal-box modal-lg">
+        <div class="modal-header">
+            <h3 id="agentModalTitle">New Agent</h3>
+            <button class="modal-close" onclick="closeAgentModal()">&times;</button>
+        </div>
+        <form id="agentForm" onsubmit="return saveAgent(event)">
+            <!-- Input mode toggle -->
+            <div class="form-group">
+                <div class="radio-group">
+                    <label><input type="radio" name="inputMode" value="paste" checked onchange="toggleInputMode()"> Paste Code</label>
+                    <label><input type="radio" name="inputMode" value="manual" onchange="toggleInputMode()"> Manual Entry</label>
+                </div>
+            </div>
+
+            <!-- Paste Code Mode -->
+            <div id="pasteMode">
+                <div class="form-group">
+                    <label>Paste OpenAI Agent Code</label>
+                    <textarea id="codeInput" class="form-control mono" rows="14" placeholder="Paste your Python agent code here (e.g. from OpenAI agent builder)..."></textarea>
+                </div>
+                <div class="form-actions" style="margin-bottom:1rem">
+                    <button type="button" class="btn btn-secondary" onclick="extractFromCode()">Extract Config</button>
+                </div>
+                <div id="extractResult" class="text-sm" style="margin-bottom:0.75rem;color:#16a34a"></div>
+            </div>
+
+            <!-- Common fields (always visible) -->
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Name</label>
+                    <input type="text" id="agentName" required class="form-control">
+                </div>
+                <div class="form-group">
+                    <label>Executor</label>
+                    <select id="agentExecutor" class="form-control">
+                        <option value="openai_agents">openai_agents</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Model</label>
+                    <input type="text" id="agentModel" required class="form-control" placeholder="e.g. gpt-5.2">
+                </div>
+                <div class="form-group">
+                    <label>Tags (comma-separated)</label>
+                    <input type="text" id="agentTags" class="form-control">
+                </div>
+            </div>
+
+            <!-- Manual-only fields (hidden in paste mode until extracted) -->
+            <div id="manualFields">
+                <div class="form-group">
+                    <label>System Prompt</label>
+                    <textarea id="agentPrompt" class="form-control mono" rows="10"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Tools Config (JSON)</label>
+                    <textarea id="agentTools" class="form-control mono" rows="5" placeholder='{"type":"mcp","server_url":"...","allowed_tools":[...]}'></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Model Settings (JSON)</label>
+                    <textarea id="agentSettings" class="form-control mono" rows="3" placeholder='{"store":true,"reasoning":{"effort":"medium","summary":"auto"}}'></textarea>
+                </div>
+            </div>
+            <input type="hidden" id="agentId" value="">
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeAgentModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+const tag = new URLSearchParams(location.search).get('tag') || '';
+
+async function loadAgents() {
+    const url = tag ? `/api/agents?tag=${encodeURIComponent(tag)}` : '/api/agents';
+    const agents = await fetch(url).then(r => r.json());
+    const container = document.getElementById('agentsList');
+    container.innerHTML = '';
+    agents.forEach(a => {
+        const tags = (a.tags || []).map(t => `<span class="tag-chip">${t}</span>`).join(' ');
+        const toolCount = a.tools_config && a.tools_config.allowed_tools ? a.tools_config.allowed_tools.length : 0;
+        const card = document.createElement('div');
+        card.className = 'list-card';
+        card.innerHTML = `
+            <div class="list-card-main">
+                <div>
+                    <strong class="list-card-title">${a.name}</strong>
+                    <div class="text-muted text-sm">
+                        Model: ${a.model} | Executor: ${a.executor_type} | ${toolCount} tools
+                    </div>
+                    <div>${tags}</div>
+                </div>
+                <div class="list-card-actions">
+                    <button class="btn btn-sm" onclick="editAgent(${a.id})">View</button>
+                    <button class="btn btn-sm" onclick="cloneAgent(${a.id})">Clone</button>
+                </div>
+            </div>
+        `;
+        container.appendChild(card);
+    });
+}
+
+function toggleInputMode() {
+    const mode = document.querySelector('input[name="inputMode"]:checked').value;
+    document.getElementById('pasteMode').style.display = mode === 'paste' ? 'block' : 'none';
+    // Manual fields always visible so user can review/edit after extraction
+}
+
+async function extractFromCode() {
+    const code = document.getElementById('codeInput').value;
+    if (!code.trim()) { alert('Paste code first'); return; }
+    const resultEl = document.getElementById('extractResult');
+    resultEl.textContent = 'Parsing...';
+    resultEl.style.color = '#666';
+
+    try {
+        const resp = await fetch('/api/agents/parse-code', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ code }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            resultEl.textContent = data.detail || 'Parse error';
+            resultEl.style.color = '#dc2626';
+            return;
+        }
+
+        const extracted = [];
+        if (data.name) { document.getElementById('agentName').value = data.name; extracted.push('name'); }
+        if (data.model) { document.getElementById('agentModel').value = data.model; extracted.push('model'); }
+        if (data.system_prompt) { document.getElementById('agentPrompt').value = data.system_prompt; extracted.push('system_prompt'); }
+        if (data.tools_config) { document.getElementById('agentTools').value = JSON.stringify(data.tools_config, null, 2); extracted.push('tools_config'); }
+        if (data.model_settings) { document.getElementById('agentSettings').value = JSON.stringify(data.model_settings, null, 2); extracted.push('model_settings'); }
+
+        if (extracted.length > 0) {
+            resultEl.textContent = `Extracted: ${extracted.join(', ')}`;
+            resultEl.style.color = '#16a34a';
+        } else {
+            resultEl.textContent = 'No Agent() call found. Check the code format.';
+            resultEl.style.color = '#dc2626';
+        }
+    } catch(e) {
+        resultEl.textContent = 'Error: ' + e.message;
+        resultEl.style.color = '#dc2626';
+    }
+}
+
+function showCreate() {
+    document.getElementById('agentModalTitle').textContent = 'New Agent';
+    document.getElementById('agentId').value = '';
+    document.getElementById('agentName').value = '';
+    document.getElementById('agentModel').value = '';
+    document.getElementById('agentPrompt').value = '';
+    document.getElementById('agentTools').value = '';
+    document.getElementById('agentSettings').value = '';
+    document.getElementById('agentTags').value = '';
+    document.getElementById('codeInput').value = '';
+    document.getElementById('extractResult').textContent = '';
+    // Default to paste mode
+    document.querySelector('input[name="inputMode"][value="paste"]').checked = true;
+    toggleInputMode();
+    document.getElementById('agentModal').style.display = 'flex';
+}
+
+async function editAgent(id) {
+    const a = await fetch(`/api/agents/${id}`).then(r => r.json());
+    document.getElementById('agentModalTitle').textContent = 'Edit Agent';
+    document.getElementById('agentId').value = id;
+    document.getElementById('agentName').value = a.name;
+    document.getElementById('agentExecutor').value = a.executor_type;
+    document.getElementById('agentModel').value = a.model;
+    document.getElementById('agentPrompt').value = a.system_prompt || '';
+    document.getElementById('agentTools').value = a.tools_config ? JSON.stringify(a.tools_config, null, 2) : '';
+    document.getElementById('agentSettings').value = a.model_settings ? JSON.stringify(a.model_settings, null, 2) : '';
+    document.getElementById('agentTags').value = (a.tags || []).join(', ');
+    document.getElementById('codeInput').value = '';
+    document.getElementById('extractResult').textContent = '';
+    // Switch to manual mode for editing
+    document.querySelector('input[name="inputMode"][value="manual"]').checked = true;
+    toggleInputMode();
+    document.getElementById('agentModal').style.display = 'flex';
+}
+
+async function cloneAgent(id) {
+    const a = await fetch(`/api/agents/${id}`).then(r => r.json());
+    document.getElementById('agentModalTitle').textContent = 'Clone Agent';
+    document.getElementById('agentId').value = '';
+    document.getElementById('agentName').value = a.name + ' (copy)';
+    document.getElementById('agentExecutor').value = a.executor_type;
+    document.getElementById('agentModel').value = a.model;
+    document.getElementById('agentPrompt').value = a.system_prompt || '';
+    document.getElementById('agentTools').value = a.tools_config ? JSON.stringify(a.tools_config, null, 2) : '';
+    document.getElementById('agentSettings').value = a.model_settings ? JSON.stringify(a.model_settings, null, 2) : '';
+    document.getElementById('agentTags').value = (a.tags || []).join(', ');
+    document.getElementById('codeInput').value = '';
+    document.getElementById('extractResult').textContent = '';
+    // Switch to manual mode for cloning
+    document.querySelector('input[name="inputMode"][value="manual"]').checked = true;
+    toggleInputMode();
+    document.getElementById('agentModal').style.display = 'flex';
+}
+
+function closeAgentModal() {
+    document.getElementById('agentModal').style.display = 'none';
+}
+
+async function saveAgent(e) {
+    e.preventDefault();
+    const id = document.getElementById('agentId').value;
+    let toolsConfig = null;
+    let modelSettings = null;
+    try {
+        const tc = document.getElementById('agentTools').value.trim();
+        if (tc) toolsConfig = JSON.parse(tc);
+    } catch(e) { alert('Invalid tools config JSON'); return false; }
+    try {
+        const ms = document.getElementById('agentSettings').value.trim();
+        if (ms) modelSettings = JSON.parse(ms);
+    } catch(e) { alert('Invalid model settings JSON'); return false; }
+
+    const body = {
+        name: document.getElementById('agentName').value,
+        executor_type: document.getElementById('agentExecutor').value,
+        model: document.getElementById('agentModel').value,
+        system_prompt: document.getElementById('agentPrompt').value || null,
+        tools_config: toolsConfig,
+        model_settings: modelSettings,
+        tags: document.getElementById('agentTags').value.split(',').map(t => t.trim()).filter(Boolean),
+    };
+    const url = id ? `/api/agents/${id}` : '/api/agents';
+    const method = id ? 'PUT' : 'POST';
+    await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+    closeAgentModal();
+    loadAgents();
+    return false;
+}
+
+loadAgents();
+</script>
+{% endblock %}

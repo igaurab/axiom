@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Datasets — Benchmark App{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Datasets</h1>
+    <button class="btn btn-primary" onclick="showCreateModal()">+ New Dataset</button>
+</div>
+
+<div id="suitesList"></div>
+
+<!-- Create/Edit Modal -->
+<div class="modal-overlay" id="suiteModal" style="display:none">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3 id="modalTitle">New Dataset</h3>
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+        </div>
+        <form id="suiteForm" onsubmit="return saveSuite(event)">
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" id="suiteName" required class="form-control">
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <textarea id="suiteDesc" class="form-control" rows="3"></textarea>
+            </div>
+            <div class="form-group">
+                <label>Tags (comma-separated)</label>
+                <input type="text" id="suiteTags" class="form-control">
+            </div>
+            <input type="hidden" id="suiteId" value="">
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+const tag = new URLSearchParams(location.search).get('tag') || '';
+
+async function loadSuites() {
+    const url = tag ? `/api/suites?tag=${encodeURIComponent(tag)}` : '/api/suites';
+    const suites = await fetch(url).then(r => r.json());
+    const container = document.getElementById('suitesList');
+    container.innerHTML = '';
+    suites.forEach(s => {
+        const tags = (s.tags || []).map(t => `<span class="tag-chip">${t}</span>`).join(' ');
+        const card = document.createElement('div');
+        card.className = 'list-card';
+        card.innerHTML = `
+            <div class="list-card-main">
+                <div>
+                    <strong class="list-card-title">${s.name}</strong>
+                    <span class="text-muted">${s.query_count} queries</span>
+                    <div>${tags}</div>
+                    <div class="text-muted text-sm">Created ${new Date(s.created_at).toLocaleDateString()}</div>
+                </div>
+                <div class="list-card-actions">
+                    <a href="/suites/${s.id}" class="btn btn-sm">View</a>
+                    <button class="btn btn-sm" onclick="editSuite(${s.id})">Edit</button>
+                </div>
+            </div>
+        `;
+        container.appendChild(card);
+    });
+}
+
+function showCreateModal() {
+    document.getElementById('modalTitle').textContent = 'New Dataset';
+    document.getElementById('suiteId').value = '';
+    document.getElementById('suiteName').value = '';
+    document.getElementById('suiteDesc').value = '';
+    document.getElementById('suiteTags').value = '';
+    document.getElementById('suiteModal').style.display = 'flex';
+}
+
+async function editSuite(id) {
+    const s = await fetch(`/api/suites/${id}`).then(r => r.json());
+    document.getElementById('modalTitle').textContent = 'Edit Dataset';
+    document.getElementById('suiteId').value = id;
+    document.getElementById('suiteName').value = s.name;
+    document.getElementById('suiteDesc').value = s.description || '';
+    document.getElementById('suiteTags').value = (s.tags || []).join(', ');
+    document.getElementById('suiteModal').style.display = 'flex';
+}
+
+function closeModal() {
+    document.getElementById('suiteModal').style.display = 'none';
+}
+
+async function saveSuite(e) {
+    e.preventDefault();
+    const id = document.getElementById('suiteId').value;
+    const body = {
+        name: document.getElementById('suiteName').value,
+        description: document.getElementById('suiteDesc').value || null,
+        tags: document.getElementById('suiteTags').value.split(',').map(t => t.trim()).filter(Boolean),
+    };
+    const url = id ? `/api/suites/${id}` : '/api/suites';
+    const method = id ? 'PUT' : 'POST';
+    await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+    closeModal();
+    loadSuites();
+    return false;
+}
+
+loadSuites();
+</script>
+{% endblock %}
