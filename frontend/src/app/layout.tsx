@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, Plus_Jakarta_Sans, JetBrains_Mono } from "next/font/google";
+import { Inter, Plus_Jakarta_Sans, JetBrains_Mono, Roboto_Condensed } from "next/font/google";
 import { Suspense } from "react";
 import "./globals.css";
 import { QueryProvider } from "@/providers/query-provider";
@@ -9,6 +9,7 @@ import { Navbar } from "@/components/layout/navbar";
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const jakarta = Plus_Jakarta_Sans({ subsets: ["latin"], variable: "--font-jakarta" });
 const jetbrainsMono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains" });
+const robotoCondensed = Roboto_Condensed({ subsets: ["latin"], variable: "--font-roboto-condensed" });
 
 export const metadata: Metadata = {
   title: "Axiom",
@@ -21,7 +22,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${jakarta.variable} ${jetbrainsMono.variable}`} suppressHydrationWarning>
+    <html lang="en" className={`${inter.variable} ${jakarta.variable} ${jetbrainsMono.variable} ${robotoCondensed.variable}`} suppressHydrationWarning>
       <head>
         <script
           dangerouslySetInnerHTML={{

@@ -272,7 +272,8 @@ async def _build_preview(
 
     sample_cost_usd = round(aggregate_cost["total_usd"], 6)
     estimated_total_calls = len(queries) * max(1, body.repeat)
-    estimated_total_cost_usd = round(sample_cost_usd * estimated_total_calls, 6)
+    per_query_avg_cost = sample_cost_usd / max(1, sample_size)
+    estimated_total_cost_usd = round(per_query_avg_cost * estimated_total_calls, 6)
     pricing = load_pricing()
 
     record = preview or RunCostPreview(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { agentsApi } from "@/lib/api/agents";
@@ -16,6 +16,7 @@ import {
   FileText, Wrench, Settings, Cpu, Cog, Calendar, Info,
   SquarePen, Eye, ClipboardPaste,
 } from "lucide-react";
+import { encodingForModel } from "js-tiktoken";
 import Editor from "react-simple-code-editor";
 import hljs from "highlight.js/lib/core";
 import python from "highlight.js/lib/languages/python";
@@ -114,13 +115,54 @@ function InfoItem({ label, value, mono, icon }: { label: string; value: string; 
   );
 }
 
+function useTokenCount(text: string | null | undefined) {
+  const [count, setCount] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!text) { setCount(0); return; }
+
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      try {
+        const enc = encodingForModel("gpt-4o");
+        setCount(enc.encode(text).length);
+      } catch {
+        setCount(Math.ceil(text.length / 4));
+      }
+    }, 5000);
+
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, [text]);
+
+  // compute initial value synchronously on first render
+  useEffect(() => {
+    if (!text) return;
+    try {
+      const enc = encodingForModel("gpt-4o");
+      setCount(enc.encode(text).length);
+    } catch {
+      setCount(Math.ceil(text.length / 4));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return count;
+}
+
 function PromptView({ agent }: { agent: AgentOut }) {
   if (!agent.system_prompt) {
     return <EmptySection label="No system prompt configured" />;
   }
   return (
-    <div className="p-6">
-      <MarkdownRenderer content={agent.system_prompt} />
+    <div
+      className="p-6 prompt-markdown text-foreground text-base"
+      style={{ fontFamily: "var(--font-roboto-condensed), 'Roboto Condensed', sans-serif" }}
+    >
+      <MarkdownRenderer
+        content={agent.system_prompt}
+        className="max-w-none [&_pre]:bg-[var(--surface-hover)] [&_pre]:p-3 [&_pre]:rounded-md [&_pre]:overflow-x-auto [&_code]:bg-[var(--surface-hover)] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-sm"
+      />
     </div>
   );
 }
@@ -370,6 +412,8 @@ export default function AgentDetailPage() {
     enabled: !isNaN(agentId),
   });
 
+  const promptTokens = useTokenCount(editing && form ? form.prompt : agent?.system_prompt);
+
   const startEditing = () => {
     if (agent) setForm(agentToForm(agent));
     setEditing(true);
@@ -558,11 +602,18 @@ export default function AgentDetailPage() {
                 {sectionMeta.find((s) => s.key === active)?.label}
                 {editing && " — Editing"}
               </span>
-              {editing && active !== "general" && (
-                <span className="text-[10px] text-muted-light">
-                  {active === "prompt" ? "Supports Markdown" : active === "paste" ? "Raw source code" : "JSON format"}
-                </span>
-              )}
+              <span className="flex items-center gap-3">
+                {active === "prompt" && (editing ? form?.prompt : agent.system_prompt) && (
+                  <span className="text-[11px] text-muted tabular-nums">
+                    ~{promptTokens.toLocaleString()} tokens &middot; {(editing ? form!.prompt : agent.system_prompt!).length.toLocaleString()} chars
+                  </span>
+                )}
+                {editing && active !== "general" && (
+                  <span className="text-[10px] text-muted-light">
+                    {active === "prompt" ? "Supports Markdown" : active === "paste" ? "Raw source code" : "JSON format"}
+                  </span>
+                )}
+              </span>
             </div>
 
             {/* Content body */}
