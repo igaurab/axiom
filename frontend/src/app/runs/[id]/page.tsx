@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
 import { runsApi } from "@/lib/api/runs";
 import { resultsApi } from "@/lib/api/results";
+import { gradesApi } from "@/lib/api/grades";
 import { useSSE } from "@/hooks/use-sse";
 import { apiUrl } from "@/lib/api/client";
 import { exportApi } from "@/lib/api/export";
@@ -13,6 +14,8 @@ import { GradingView } from "@/components/grading/grading-view";
 import { DashboardView } from "@/components/dashboard/dashboard-view";
 import { CompareDashboard } from "@/components/dashboard/compare-dashboard";
 import { ConfigView } from "@/components/runs/config-view";
+import { CsvGradeImportModal } from "@/components/grading/csv-grade-import-modal";
+import { Upload } from "lucide-react";
 import { cn, formatElapsed } from "@/lib/utils";
 import type { RunDetailOut, SSEProgressData } from "@/lib/types";
 
@@ -37,6 +40,7 @@ export default function RunDetailPage() {
   const [rerunModal, setRerunModal] = useState(false);
   const [deleteModal, setDeleteModal] = useState(false);
   const [deleteFiles, setDeleteFiles] = useState(false);
+  const [gradeImportModal, setGradeImportModal] = useState(false);
 
   // Rerun form
   const [rerunLabel, setRerunLabel] = useState("");
@@ -191,6 +195,18 @@ export default function RunDetailPage() {
     },
   });
 
+  // Grade CSV import
+  const gradeImportMutation = useMutation({
+    mutationFn: async ({ file, mapping }: { file: File; mapping: Record<string, string | null> }) => {
+      return gradesApi.importCsv(runId, file, mapping);
+    },
+    onSuccess: (data) => {
+      setGradeImportModal(false);
+      queryClient.invalidateQueries({ queryKey: ["results"] });
+      alert(`Imported ${data.imported} grade(s), skipped ${data.skipped}.${data.errors.length ? `\nErrors:\n${data.errors.map((e) => `Row ${e.row}: ${e.reason}`).join("\n")}` : ""}`);
+    },
+  });
+
   // Close actions menu on outside click
   useEffect(() => {
     if (!actionsOpen) return;
@@ -292,7 +308,7 @@ export default function RunDetailPage() {
           {mode === "grading" && (
             <>
               {isGroup ? <GradingView runIds={allRunIds} compare /> : <GradingView runId={runId} />}
-              <ExportBar runIds={exportRunIds} />
+              <ExportBar runIds={exportRunIds} onImportGrades={() => setGradeImportModal(true)} />
             </>
           )}
           {mode === "dashboard" && (
@@ -355,6 +371,15 @@ export default function RunDetailPage() {
         </div>
       )}
 
+      {/* Grade Import Modal */}
+      {gradeImportModal && (
+        <CsvGradeImportModal
+          onClose={() => setGradeImportModal(false)}
+          onImport={(file, mapping) => gradeImportMutation.mutate({ file, mapping })}
+          isPending={gradeImportMutation.isPending}
+        />
+      )}
+
       {/* Delete Modal */}
       {deleteModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={(e) => e.target === e.currentTarget && setDeleteModal(false)}>
@@ -381,9 +406,14 @@ export default function RunDetailPage() {
   );
 }
 
-function ExportBar({ runIds }: { runIds: number[] }) {
+function ExportBar({ runIds, onImportGrades }: { runIds: number[]; onImportGrades?: () => void }) {
   return (
     <div className="flex gap-2 mt-6 pt-4 border-t border-border">
+      {onImportGrades && (
+        <button onClick={onImportGrades} className="px-4 py-2 bg-[var(--surface-hover)] rounded-lg font-semibold text-sm hover:bg-border text-muted flex items-center gap-1.5">
+          <Upload size={14} /> Import Grades
+        </button>
+      )}
       <a href={exportApi.htmlUrl(runIds)} target="_blank" className="px-4 py-2 bg-[var(--surface-hover)] rounded-lg font-semibold text-sm hover:bg-border no-underline text-muted">Share as HTML</a>
       <a href={exportApi.csvUrl(runIds)} className="px-4 py-2 bg-[var(--surface-hover)] rounded-lg font-semibold text-sm hover:bg-border no-underline text-muted">Export CSV</a>
       <a href={exportApi.jsonUrl(runIds)} className="px-4 py-2 bg-[var(--surface-hover)] rounded-lg font-semibold text-sm hover:bg-border no-underline text-muted">Export JSON</a>

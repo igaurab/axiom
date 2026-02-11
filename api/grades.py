@@ -1,6 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+import csv
+import io
+import json
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from database import get_db
 from models.grade import Grade
@@ -35,3 +40,90 @@ async def upsert_grade(
         await db.commit()
         await db.refresh(grade)
         return GradeOut.model_validate(grade)
+
+
+@router.post("/runs/{run_id}/import-csv", response_model=dict)
+async def import_grades_csv(
+    run_id: int,
+    file: UploadFile = File(...),
+    mapping: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Import grades from CSV with column mapping.
+
+    mapping is a JSON string: {"query_text": "col", "grade": "col", "notes": "col"|null}
+    """
+    try:
+        col_map = json.loads(mapping)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "Invalid mapping JSON")
+
+    if not col_map.get("query_text") or not col_map.get("grade"):
+        raise HTTPException(400, "query_text and grade mappings are required")
+
+    # Load all results for this run with their queries
+    stmt = (
+        select(Result)
+        .where(Result.run_id == run_id)
+        .options(selectinload(Result.query), selectinload(Result.grade))
+    )
+    results = (await db.execute(stmt)).scalars().all()
+    if not results:
+        raise HTTPException(404, "No results found for this run")
+
+    # Build lookup: query_text (stripped, lowered) -> result
+    lookup: dict[str, Result] = {}
+    for r in results:
+        if r.query:
+            key = r.query.query_text.strip().lower()
+            lookup[key] = r
+
+    # Parse CSV
+    content = (await file.read()).decode("utf-8")
+    reader = csv.DictReader(io.StringIO(content))
+    if not reader.fieldnames:
+        raise HTTPException(400, "Empty CSV or no header row")
+
+    for field in ("query_text", "grade", "notes"):
+        csv_col = col_map.get(field)
+        if csv_col and csv_col not in reader.fieldnames:
+            raise HTTPException(400, f"Column '{csv_col}' not found in CSV")
+
+    VALID_GRADES = {"correct", "partial", "wrong"}
+    imported = 0
+    skipped = 0
+    errors: list[dict] = []
+
+    for i, row in enumerate(reader, start=2):  # row 1 is header
+        query_text = row.get(col_map["query_text"], "").strip()
+        grade_val = row.get(col_map["grade"], "").strip().lower()
+        notes_val = (
+            row.get(col_map["notes"], "").strip() if col_map.get("notes") else None
+        )
+
+        if not query_text:
+            skipped += 1
+            continue
+
+        if grade_val not in VALID_GRADES:
+            errors.append({"row": i, "reason": f"Invalid grade '{grade_val}'"})
+            continue
+
+        key = query_text.strip().lower()
+        result = lookup.get(key)
+        if not result:
+            skipped += 1
+            continue
+
+        # Upsert grade
+        if result.grade:
+            result.grade.grade = grade_val
+            result.grade.notes = notes_val or result.grade.notes
+        else:
+            g = Grade(result_id=result.id, grade=grade_val, notes=notes_val or None)
+            db.add(g)
+
+        imported += 1
+
+    await db.commit()
+    return {"imported": imported, "skipped": skipped, "errors": errors}

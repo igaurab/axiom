@@ -1,8 +1,8 @@
-# Benchmark App — Application Guide
+# Axiom — Application Guide
 
 ## Overview
 
-FastAPI web application for running, grading, and comparing LLM agent benchmarks. PostgreSQL-backed. Background execution with SSE live progress. Tags for team separation (no auth). Shareable HTML/CSV/JSON export.
+FastAPI + Next.js application for running, grading, and comparing LLM agent benchmarks. PostgreSQL-backed. Background execution with SSE live progress. Cost preview before runs. Trace logging for every API call. Tags for team separation (no auth). Shareable HTML/CSV/JSON export. In-app notifications.
 
 ---
 
@@ -10,14 +10,17 @@ FastAPI web application for running, grading, and comparing LLM agent benchmarks
 
 | Layer | Choice |
 |-------|--------|
-| Framework | FastAPI |
-| Templates | Jinja2 (server-rendered pages + client-side JS) |
+| Backend | FastAPI |
+| Frontend | Next.js 14 (App Router, TypeScript, TanStack Query) |
+| Legacy Templates | Jinja2 (server-rendered, still mounted) |
 | ORM | SQLAlchemy 2.0 async (asyncpg driver) |
 | Migrations | Alembic (psycopg2 sync driver) |
 | DB | PostgreSQL 16+ |
 | SSE | sse-starlette |
 | Agent SDK | openai-agents (`agents` package) |
-| Package manager | uv |
+| Package manager | uv (backend), npm (frontend) |
+| Styling | Tailwind CSS v4, CSS variables, glass morphism |
+| Fonts | Plus Jakarta Sans, Inter, JetBrains Mono, Roboto Condensed (prompt view) |
 
 ---
 
@@ -25,74 +28,159 @@ FastAPI web application for running, grading, and comparing LLM agent benchmarks
 
 ```
 axiom/
-  APP_GUIDE.md           # This file
-  main.py                # FastAPI app factory, lifespan, router mounting
-  config.py              # Pydantic Settings (DATABASE_URL, OPENAI_API_KEY, OUTPUT_BASE_DIR)
-  database.py            # Async engine + session factory + DeclarativeBase
+  .claude/
+    APP_GUIDE.md             # This file
+    DASHBOARD_SKILL.md       # Dashboard UI/UX reference
 
-  models/                # SQLAlchemy ORM models
-    suite.py             # BenchmarkSuite
-    query.py             # Query
-    agent.py             # AgentConfig
-    run.py               # Run (with run_group, run_number for repeat runs)
-    result.py            # Result
-    grade.py             # Grade
+  main.py                    # FastAPI app factory, lifespan, CORS, router mounting
+  config.py                  # Pydantic Settings (DATABASE_URL, OPENAI_API_KEY, OUTPUT_BASE_DIR)
+  database.py                # Async engine + session factory + DeclarativeBase
+  pyproject.toml             # uv project config + dependencies
+  uv.lock                    # Lock file
+  Dockerfile                 # Python 3.13-slim, uv sync, port 8000
+  docker-compose.yml         # App + PostgreSQL services
+  alembic.ini                # Alembic config
+  seed.py                    # Seeds sample suite + agent config
+  start.sh                   # Startup script (alembic upgrade + uvicorn)
 
-  schemas/               # Pydantic request/response models
-    schemas.py           # All schemas (SuiteCreate, AgentOut, RunCreate, etc.)
+  models/                    # SQLAlchemy ORM models
+    __init__.py              # Re-exports all models
+    suite.py                 # BenchmarkSuite
+    query.py                 # Query
+    agent.py                 # AgentConfig (+ source_code field)
+    run.py                   # Run (run_group, run_number for repeats)
+    result.py                # Result (+ trace_log_id FK)
+    grade.py                 # Grade
+    comparison.py            # Comparison + comparison_runs junction table
+    trace_log.py             # TraceLog (API call tracing)
+    run_cost_preview.py      # RunCostPreview (pre-run cost estimation)
+    app_notification.py      # AppNotification
 
-  api/                   # REST API routers
-    suites.py            # CRUD + CSV import for suites/queries
-    agents.py            # CRUD for agent configurations
-    runs.py              # Create (with repeat), list, get, cancel, delete, group
-    results.py           # List/get results by run
-    grades.py            # Upsert grade (correct/partial/wrong)
-    analytics.py         # Single-run and cross-run analytics
-    export.py            # HTML, CSV, JSON export endpoints
-    sse.py               # SSE stream endpoint for live progress
+  schemas/
+    schemas.py               # All Pydantic request/response models
 
-  executors/             # Pluggable agent execution backends
-    base.py              # ABC: AgentExecutor + ExecutionResult dataclass
-    openai_agents.py     # OpenAI Agents SDK executor (HostedMCPTool, Runner)
-    registry.py          # Register/get executor by type string
+  api/                       # REST API routers
+    suites.py                # CRUD + CSV import for suites/queries
+    agents.py                # CRUD + parse-code endpoint for agent configs
+    runs.py                  # Create (with repeat), list, get, cancel, delete, group, cost preview
+    results.py               # List/get results by run
+    grades.py                # Upsert grade (correct/partial/wrong)
+    analytics.py             # Single-run and cross-run analytics
+    export.py                # HTML, CSV, JSON export endpoints
+    sse.py                   # SSE stream endpoint for live progress
+    browse.py                # Filesystem browser for output_dir selection
+    comparisons.py           # Saved comparison CRUD
+    traces.py                # Trace log listing + cost summaries
+    notifications.py         # Notification list, mark read, delete all
 
-  workers/               # Background job execution
-    runner.py            # execute_run() — batch processing, SSE events, JSON output
-    sse_bus.py           # In-process pub/sub with asyncio.Queue per subscriber
+  executors/                 # Pluggable agent execution backends
+    base.py                  # ABC: AgentExecutor + ExecutionResult dataclass
+    openai_agents.py         # OpenAI Agents SDK executor
+    registry.py              # Register/get executor by type string
 
-  services/              # Business logic
-    analytics.py         # compute_run_analytics(), compute_compare_analytics()
-    html_export.py       # generate_export_html() — self-contained shareable HTML
+  workers/                   # Background job execution
+    runner.py                # execute_run() — batch processing, SSE events, JSON output
+    sse_bus.py               # In-process pub/sub with asyncio.Queue per subscriber
 
-  pages/                 # Jinja2 page routes
-    views.py             # GET /, /runs/new, /runs/{id}, /suites, /suites/{id}, /agents, /compare
+  services/                  # Business logic
+    analytics.py             # compute_run_analytics(), compute_compare_analytics()
+    html_export.py           # generate_export_html() — self-contained shareable HTML
+    openai_pricing.py        # Model pricing data + calculate_cost() for token/tool usage
 
-  templates/             # Jinja2 HTML templates
-    base.html            # Navbar, global tag filter, CSS/JS includes
-    runs/
-      list.html          # Runs table with checkboxes for compare
-      new.html           # New run form (suite, agent, label, tags, output dir, batch, repeat, query picker)
-      detail.html        # Live progress (SSE) or grading/dashboard (tabbed for groups)
-    suites/
-      list.html          # Suite list with create/edit modal
-      detail.html        # Suite detail: CSV import, queries table, add query modal
-    agents/
-      list.html          # Agent list with paste-code & manual entry modes
-    compare.html         # Compare view (ad-hoc cross-run comparison)
+  pages/
+    views.py                 # Legacy Jinja2 page routes (still mounted)
 
-  static/
-    css/main.css         # All styles
-    js/grading.js        # Single-run + compare tabbed grading logic
-    js/dashboard.js      # Single-run + compare dashboard rendering
+  templates/                 # Jinja2 HTML templates (legacy)
+  static/                    # Legacy CSS/JS
+
+  frontend/                  # Next.js application
+    src/
+      app/                   # App Router pages
+        page.tsx             # Home — runs list (dashboard)
+        layout.tsx           # Root layout (fonts, providers, navbar)
+        globals.css          # CSS variables, theme, animations, prompt-markdown styles
+        datasets/
+          page.tsx           # Dataset (suite) list
+          [id]/page.tsx      # Dataset detail — queries table, CSV import
+        agents/
+          page.tsx           # Agent list
+          [id]/page.tsx      # Agent detail — tabbed view (general/prompt/tools/settings/paste)
+          new/page.tsx       # New agent form (paste code or manual)
+        runs/
+          [id]/page.tsx      # Run detail — live progress, grading, dashboard tabs
+          new/page.tsx       # New run form — cost preview integration
+        compare/
+          page.tsx           # Ad-hoc comparison picker
+          [id]/page.tsx      # Saved comparison detail
+        cost-previews/
+          page.tsx           # Cost preview list + detail modal
+        traces/
+          page.tsx           # Trace log viewer with cost breakdown
+        notifications/
+          page.tsx           # Notification center
+      components/
+        layout/
+          navbar.tsx         # Top navigation bar + tag filter + theme toggle
+          page-header.tsx    # Reusable page header with back link + actions
+        dashboard/
+          dashboard-view.tsx # Single-run dashboard
+          compare-dashboard.tsx # Multi-run comparison dashboard
+          accuracy-overview.tsx
+          accuracy-by-type.tsx
+          performance-stats.tsx
+          tool-usage-chart.tsx
+        grading/
+          grading-view.tsx   # Single-run grading interface
+          grading-card.tsx   # Per-query card with grade buttons
+          compare-card.tsx   # Multi-run query card
+          grade-button.tsx
+          grade-summary.tsx
+          query-nav.tsx
+          reasoning-display.tsx
+        tool-calls/
+          tool-pills.tsx     # Clickable tool call badges
+          tool-modal.tsx     # Full-screen tool call detail modal
+          tool-sidebar.tsx   # Tool call sidebar panel
+          tool-content.tsx   # JSON input/output display
+        json/
+          json-tree.tsx      # Interactive JSON tree viewer
+          json-section.tsx   # Collapsible JSON section wrapper
+          fullscreen-viewer.tsx
+        datasets/
+          csv-import-modal.tsx
+        runs/
+          config-view.tsx    # Run config display (agent, model, prompt)
+        markdown/
+          markdown-renderer.tsx # ReactMarkdown + remarkGfm with normalization
+        ui/
+          tag-badge.tsx
+          status-badge.tsx
+          checkbox.tsx
+      lib/
+        api/                 # Typed API client modules
+          client.ts          # Shared fetch wrapper
+          agents.ts, analytics.ts, browse.ts, comparisons.ts,
+          export.ts, grades.ts, notifications.ts, results.ts,
+          runs.ts, suites.ts, traces.ts
+        types.ts             # TypeScript type definitions
+        utils.ts             # formatDate, cn() helper
+        markdown-table.ts    # Copy markdown table to clipboard
+      providers/
+        query-provider.tsx   # TanStack Query provider
+        tag-filter-provider.tsx # Global tag filter context
 
   alembic/
-    env.py               # Uses DATABASE_URL_SYNC from Settings
+    env.py                   # Uses DATABASE_URL_SYNC from Settings
     versions/
-      001_initial.py     # All 6 tables
+      001_initial.py         # 6 core tables
       002_add_output_dir.py
       003_add_run_group.py
-
-  seed.py                # Seeds Astro Gold v1 suite + GPT-5.2 CARE Agent config
+      004_add_comparisons.py
+      005_rename_query_type_to_tag.py
+      006_add_trace_logs.py
+      007_add_run_cost_previews.py
+      008_add_cost_preview_status_and_notifications.py
+      009_add_agent_source_code.py
 ```
 
 ---
@@ -115,7 +203,7 @@ axiom/
 | id | SERIAL PK | |
 | suite_id | FK -> benchmark_suites | CASCADE delete |
 | ordinal | INT | display order |
-| tag | VARCHAR(100) | e.g. "archive_driven" |
+| tag | VARCHAR(100) | e.g. "archive_driven" (renamed from query_type) |
 | query_text | TEXT | the benchmark question |
 | expected_answer | TEXT | ground truth |
 | comments | TEXT | nullable |
@@ -131,6 +219,7 @@ axiom/
 | system_prompt | TEXT | agent instructions |
 | tools_config | JSONB | MCP server URL + allowed tools |
 | model_settings | JSONB | store, reasoning effort/summary |
+| source_code | TEXT | nullable, original Python source |
 | tags | TEXT[] | |
 | created_at | TIMESTAMPTZ | auto |
 
@@ -160,6 +249,7 @@ axiom/
 | id | SERIAL PK | |
 | run_id | FK -> runs | CASCADE delete |
 | query_id | FK -> queries | |
+| trace_log_id | FK -> trace_logs | nullable, links to API trace |
 | agent_response | TEXT | nullable (null on error) |
 | tool_calls | JSONB | [{name, arguments, response}] |
 | reasoning | JSONB | [{summary: [...], content: [...]}] |
@@ -177,6 +267,78 @@ axiom/
 | notes | TEXT | nullable |
 | created_at | TIMESTAMPTZ | auto |
 | updated_at | TIMESTAMPTZ | auto |
+
+### comparisons
+| Column | Type | Notes |
+|--------|------|-------|
+| id | SERIAL PK | |
+| name | VARCHAR(255) | nullable |
+| suite_id | FK -> benchmark_suites | |
+| created_at | TIMESTAMPTZ | auto |
+| updated_at | TIMESTAMPTZ | auto |
+
+### comparison_runs (junction)
+| Column | Type | Notes |
+|--------|------|-------|
+| comparison_id | FK -> comparisons PK | CASCADE |
+| run_id | FK -> runs PK | CASCADE |
+
+### trace_logs
+| Column | Type | Notes |
+|--------|------|-------|
+| id | SERIAL PK | |
+| run_id | FK -> runs | nullable, CASCADE, indexed |
+| query_id | FK -> queries | nullable, indexed |
+| provider | VARCHAR(50) | default "openai" |
+| endpoint | VARCHAR(120) | e.g. "agents.runner.run" |
+| model | VARCHAR(255) | nullable, indexed |
+| status | VARCHAR(20) | started/completed/failed, indexed |
+| request_payload | JSONB | nullable |
+| response_payload | JSONB | nullable |
+| usage | JSONB | nullable |
+| error | TEXT | nullable |
+| latency_ms | INT | nullable |
+| started_at | TIMESTAMPTZ | |
+| completed_at | TIMESTAMPTZ | nullable |
+| created_at | TIMESTAMPTZ | auto, indexed |
+
+### run_cost_previews
+| Column | Type | Notes |
+|--------|------|-------|
+| id | SERIAL PK | |
+| suite_id | FK -> benchmark_suites | indexed |
+| agent_config_id | FK -> agent_configs | indexed |
+| label | VARCHAR(255) | |
+| tags | TEXT[] | |
+| batch_size | INT | default 10 |
+| repeat | INT | default 1 |
+| output_dir | TEXT | nullable |
+| query_ids | INT[] | all selected query IDs |
+| sample_query_ids | INT[] | sampled subset IDs |
+| total_query_count | INT | |
+| sample_usage | JSONB | usage_totals, cost_breakdown, per_query_costs |
+| sample_cost_usd | FLOAT | total cost of sample queries |
+| estimated_total_cost_usd | FLOAT | (sample_cost / sample_size) * total_queries |
+| pricing_version | VARCHAR(64) | |
+| currency | VARCHAR(8) | default "USD" |
+| status | VARCHAR(20) | pending/completed/failed, indexed |
+| error_message | TEXT | nullable |
+| started_at | TIMESTAMPTZ | nullable |
+| completed_at | TIMESTAMPTZ | nullable |
+| approved_at | TIMESTAMPTZ | nullable |
+| consumed_at | TIMESTAMPTZ | nullable |
+| created_at | TIMESTAMPTZ | auto, indexed |
+
+### app_notifications
+| Column | Type | Notes |
+|--------|------|-------|
+| id | SERIAL PK | |
+| notif_type | VARCHAR(50) | indexed, e.g. "run_completed", "cost_preview" |
+| title | VARCHAR(255) | |
+| message | TEXT | |
+| related_id | INT | nullable, indexed (links to run/preview) |
+| is_read | BOOLEAN | default false, indexed |
+| created_at | TIMESTAMPTZ | auto, indexed |
 
 ---
 
@@ -199,16 +361,21 @@ axiom/
 | POST | /api/agents | Create agent config |
 | GET | /api/agents/{id} | Get agent detail |
 | PUT | /api/agents/{id} | Update agent config |
+| DELETE | /api/agents/{id} | Delete agent |
+| POST | /api/agents/parse-code | Parse Python code → extract agent config |
 
 ### Runs
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | /api/runs | List all runs (optional ?tag=) |
-| POST | /api/runs | Create run(s). Returns array. Set `repeat` > 1 for multiple. |
+| POST | /api/runs | Create run(s). Returns array. Set `repeat` > 1 for multiple |
 | GET | /api/runs/group/{run_group} | List all runs in a group |
 | GET | /api/runs/{id} | Get single run detail |
 | POST | /api/runs/{id}/cancel | Cancel a running run |
 | DELETE | /api/runs/{id} | Delete a run |
+| POST | /api/runs/preview-cost | Run cost preview (samples up to 3 queries) |
+| GET | /api/runs/preview-costs | List stored cost preview records |
+| POST | /api/runs/preview-costs/{id}/retry | Retry a failed cost preview |
 
 ### Results & Grades
 | Method | Path | Purpose |
@@ -235,6 +402,34 @@ axiom/
 |--------|------|---------|
 | GET | /api/runs/{run_id}/stream | EventSource for live progress |
 
+### Comparisons
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | /api/comparisons | Create saved comparison |
+| GET | /api/comparisons | List comparisons |
+| GET | /api/comparisons/{id} | Get comparison detail |
+| DELETE | /api/comparisons/{id} | Delete comparison |
+
+### Traces
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | /api/traces | List trace logs (filters: run_id, model, status) |
+| GET | /api/traces/summary | Aggregated trace cost summary |
+| GET | /api/traces/{id} | Single trace detail |
+
+### Notifications
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | /api/notifications | List notifications (?unread_only, ?limit) |
+| POST | /api/notifications/{id}/read | Mark notification as read |
+| POST | /api/notifications/read-all | Mark all as read |
+| DELETE | /api/notifications | Delete all notifications |
+
+### Browse
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | /api/browse | List dirs/files at path (for output_dir picker) |
+
 ---
 
 ## Key Features & Logic
@@ -251,8 +446,19 @@ axiom/
 3. Global semaphore limits to **max 3 concurrent runs**
 4. Runner processes queries in batches (batch_size concurrent per batch)
 5. Each result saved to DB + JSON file in output_dir
-6. SSE events published via in-process `SSEBus` for live UI updates
-7. On completion, status set to "completed"
+6. TraceLog created for each API call with usage/cost data
+7. SSE events published via in-process `SSEBus` for live UI updates
+8. On completion, status set to "completed", notification created
+
+### Cost Preview Flow
+1. User configures run in New Run form, clicks "Preview Cost"
+2. `POST /api/runs/preview-cost` samples up to 3 queries from dataset
+3. Each sample query executed against the agent
+4. Per-query cost calculated using `services/openai_pricing.py`
+5. Estimated total = `(sample_cost / sample_size) * total_queries_in_dataset`
+6. Result stored in `run_cost_previews` table
+7. User reviews cost breakdown, approves, then creates actual run
+8. Notification sent on completion/failure
 
 ### Repeat Runs (Run Groups)
 - New Run form has "Repeat" field (default 1)
@@ -262,28 +468,11 @@ axiom/
   - Output dirs: `<base>/run_1/`, `<base>/run_2/`, `<base>/run_3/`
   - Runs execute in parallel (up to 3 concurrent via semaphore)
 - Viewing any run in a group auto-shows the tabbed compare view
-  - Live mode: individual progress bars for each run
-  - Grading mode: per-query cards with tab per run (like non-care HTML viewer)
-  - Dashboard mode: cross-run accuracy, consistency, performance comparison
 
 ### Output Directory
 - Default: `~/axiom_data/<label>/`
 - For grouped runs: `~/axiom_data/<label>/run_N/`
 - Structure: `<output_dir>/json/<ordinal>.json`
-- JSON format matches legacy `run_0/json/` format:
-  ```json
-  {
-    "id": "1",
-    "query": "...",
-    "expected_answer": "...",
-    "agent_response": "...",
-    "tool_calls": [...],
-    "reasoning": [...],
-    "usage": {...},
-    "execution_time_seconds": 79.82
-  }
-  ```
-- All data also persisted in PostgreSQL (results table)
 
 ### Executor Plugin System
 - Abstract base: `AgentExecutor` with `execute(query, config) -> ExecutionResult`
@@ -292,78 +481,70 @@ axiom/
   - Builds `HostedMCPTool` from tools_config JSON
   - Creates `Agent` with model, instructions, ModelSettings
   - Runs via `Runner.run()` from agents SDK
-  - Extracts tool calls (ToolCallItem), reasoning (ReasoningItem), usage stats
+  - Extracts tool calls, reasoning, usage stats
 
 ### Grading
 - Three grades: correct, partial, wrong
 - One grade per result (last writer wins)
-- Grades stored in DB (not localStorage)
 - Weighted score: correct=1, partial=0.5, wrong=0
-- Real-time UI updates: response box color, tab dots, summary counters
 
 ### Analytics
 - Grade counts + accuracy + weighted score
-- Breakdown by tag
+- Breakdown by tag (renamed from query_type)
 - Performance stats: mean, median, std, min, max for time/tokens/tools/reasoning
 - Tool usage counters
 - Cross-run consistency analysis (all_correct, all_wrong, inconsistent)
 
----
+### Trace Logging
+- Every agent SDK API call logged in `trace_logs` table
+- Captures: provider, endpoint, model, request/response payloads, usage, latency
+- Cost breakdown computed via `services/openai_pricing.py`
+- Trace viewer page shows per-call costs and aggregated summaries
+- Traces linked to results via `trace_log_id` FK
 
-## UI Pages
-
-### Runs List (GET /)
-- Table of all runs with label, suite, agent, status, progress, tags
-- Checkboxes for selecting runs to compare
-- Tag filter pills
-
-### New Run (GET /runs/new)
-- Suite dropdown, Agent dropdown
-- Label, Tags, Output Directory
-- Batch Size, Repeat (default 1)
-- Query picker: All / Select Specific
-  - Select All / Deselect All
-  - Pick N with Top/Bottom/Random toggle (auto-updates on number input)
-
-### Run Detail (GET /runs/{id})
-- **Running mode**: Live progress bars + SSE-driven result stream
-  - For groups: individual progress bar per run
-- **Completed mode**: Grading / Dashboard toggle
-  - For groups: auto-uses tabbed compare view
-  - Per-query cards with grade buttons
-  - Tab bar per query showing each run's response
-  - Export buttons (HTML, CSV, JSON)
-
-### Suites (GET /suites)
-- List of suites with query counts
-- Create/edit modal
-- Suite detail: CSV import, queries table (all columns), add query
-
-### Agents (GET /agents)
-- List of agent configs with model, executor, tool count
-- **Paste Code mode** (default for new): paste OpenAI agent Python code, click "Extract Config"
-  - Parses: Agent name, model, instructions/system_prompt, HostedMCPTool config, ModelSettings
-- **Manual Entry mode**: direct form fields
-- Clone/Edit use manual mode
-
-### Compare (GET /compare?run_ids=1,2,3)
-- Ad-hoc comparison of any runs (not necessarily grouped)
-- Same tabbed grading + dashboard as grouped runs
+### Notifications
+- In-app notification system for background events
+- Types: run completion, cost preview completion/failure
+- Custom confirm dialog (no browser alerts)
+- Badge count in navbar, mark read/delete all
 
 ---
 
-## CSS Design System
+## Frontend (Next.js)
 
-- **Colors**: Primary #0066cc, Success #28a745, Warning #ffc107, Danger #dc3545
-- **Navbar**: Dark (#1a1a2e), sticky, with brand + nav links + tag filter
-- **Cards**: White, 12px border-radius, subtle box-shadow
-- **Forms**: 8px border-radius, 2px border, blue focus ring
-- **Buttons**: Primary (blue), Secondary (gray), Danger (red), small variant
-- **Tags**: Blue chips (#e7f1ff text on #004085 bg)
-- **Grade colors**: Correct=green bg, Partial=yellow bg, Wrong=red bg
-- **Tables**: White background, hover rows, uppercase headers
-- **Progress bars**: Blue gradient fill, smooth transitions
-- **Modals**: Centered overlay, max-width 700px (lg: 900px)
+### Design System
+- **Theme**: CSS variable-based light/dark toggle (data-theme attribute)
+- **Glass morphism**: backdrop-filter blur on cards and surfaces
+- **Colors**: Brand blue #2563eb, destructive red #ef4444, success green #22c55e
+- **Cards**: Rounded-xl, border-border, subtle shadow
+- **Fonts**: Plus Jakarta Sans (body), JetBrains Mono (code), Roboto Condensed (prompt view)
+- **Grade colors**: Correct=green, Partial=yellow, Wrong=red (CSS variables)
+- **Tag palette**: Blue, green, orange, purple, gray variants
+
+### Pages
+| Path | Purpose |
+|------|---------|
+| / | Runs list with status badges, progress bars, tag filter |
+| /datasets | Dataset list with query counts |
+| /datasets/[id] | Dataset detail — queries table, CSV import modal |
+| /agents | Agent list cards with model, executor, tools |
+| /agents/[id] | Agent detail — tabbed: General, System Prompt, Tools Config, Model Settings, Paste Code |
+| /agents/new | New agent — paste code mode + manual entry |
+| /runs/new | New run form — suite/agent picker, cost preview, query selection |
+| /runs/[id] | Run detail — Live (SSE progress), Grading (per-query cards), Dashboard |
+| /compare | Ad-hoc comparison picker |
+| /compare/[id] | Saved comparison detail |
+| /cost-previews | Cost preview list table + detail modal with cost/usage tables |
+| /traces | Trace log viewer with filters and cost breakdown |
+| /notifications | Notification center with custom confirm dialogs |
+
+### Agent Detail Page Features
+- Tabbed sidebar: General / System Prompt / Tools Config / Model Settings / Paste Code
+- System prompt rendered with ReactMarkdown + remarkGfm in Roboto Condensed font
+- Token count via js-tiktoken (debounced 5s in edit mode), char count
+- Edit/View mode toggle with inline form editing
+- Paste Code: syntax-highlighted Python editor with "Extract Config" parser
+- Clone and Delete actions
 
 ---
 
@@ -386,10 +567,11 @@ uv run alembic upgrade head
 # Seed data (optional)
 uv run python3 -m seed
 
-# Start server
+# Start backend (port 8000)
 uv run uvicorn main:app --reload
 
-# Open http://localhost:8000
+# Start frontend (port 3000)
+cd frontend && npm run dev
 ```
 
 ### Docker

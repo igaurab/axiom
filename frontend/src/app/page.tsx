@@ -9,6 +9,13 @@ import { suitesApi } from "@/lib/api/suites";
 import { agentsApi } from "@/lib/api/agents";
 import { browseApi } from "@/lib/api/browse";
 import { comparisonsApi } from "@/lib/api/comparisons";
+import { gradesApi } from "@/lib/api/grades";
+import {
+  parseCsvText,
+  autoMatchGrade,
+  type GradeColumnMapping,
+  type ParsedCsv,
+} from "@/components/grading/csv-grade-import-modal";
 import { PageHeader } from "@/components/layout/page-header";
 import { Checkbox } from "@/components/ui/checkbox";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -22,6 +29,7 @@ import {
   X,
   FolderOpen,
   FileText,
+  FileSpreadsheet,
   ArrowUp,
   GitCompareArrows,
   Inbox,
@@ -57,6 +65,13 @@ export default function RunsPage() {
   const [importAgentId, setImportAgentId] = useState("");
   const [importTags, setImportTags] = useState("");
   const [importResult, setImportResult] = useState("");
+
+  // Grade CSV import state (optional, inside import modal)
+  const [importGradeFile, setImportGradeFile] = useState<File | null>(null);
+  const [importGradeCsv, setImportGradeCsv] = useState<ParsedCsv | null>(null);
+  const [importGradeMapping, setImportGradeMapping] =
+    useState<GradeColumnMapping>({ query_text: "", grade: "", notes: null });
+  const [gradeSection, setGradeSection] = useState(false);
 
   const { data: runs = [], isLoading } = useQuery({
     queryKey: ["runs", tag],
@@ -119,8 +134,8 @@ export default function RunsPage() {
   });
 
   const importMutation = useMutation({
-    mutationFn: () =>
-      runsApi.import({
+    mutationFn: async () => {
+      const run = await runsApi.import({
         suite_id: parseInt(importSuiteId),
         agent_config_id: parseInt(importAgentId),
         label: importLabel,
@@ -129,11 +144,21 @@ export default function RunsPage() {
           .split(",")
           .map((t) => t.trim())
           .filter(Boolean),
-      }),
-    onSuccess: (data) => {
-      setImportResult(`Imported ${data.progress_current} results`);
+      });
+      let gradeResult = null;
+      if (importGradeFile && importGradeMapping.query_text && importGradeMapping.grade) {
+        gradeResult = await gradesApi.importCsv(run.id, importGradeFile, importGradeMapping);
+      }
+      return { run, gradeResult };
+    },
+    onSuccess: ({ run, gradeResult }) => {
+      let msg = `Imported ${run.progress_current} results`;
+      if (gradeResult) {
+        msg += ` + ${gradeResult.imported} grades (${gradeResult.skipped} skipped)`;
+      }
+      setImportResult(msg);
       queryClient.invalidateQueries({ queryKey: ["runs"] });
-      setTimeout(() => setImportModal(false), 1000);
+      setTimeout(() => setImportModal(false), 1500);
     },
     onError: (err: Error) => setImportResult(err.message),
   });
@@ -200,6 +225,10 @@ export default function RunsPage() {
           className="inline-flex items-center gap-2 px-4 py-2 rounded-xl font-medium text-sm transition-all duration-200 bg-card border border-border text-foreground hover:bg-[var(--surface-hover)] hover:-translate-y-px"
           onClick={() => {
             setImportResult("");
+            setImportGradeFile(null);
+            setImportGradeCsv(null);
+            setImportGradeMapping({ query_text: "", grade: "", notes: null });
+            setGradeSection(false);
             setImportModal(true);
           }}
         >
@@ -619,6 +648,205 @@ export default function RunsPage() {
                   onChange={(e) => setImportTags(e.target.value)}
                 />
               </div>
+
+              {/* Optional Grade CSV Import */}
+              <div className="mb-4 border border-border rounded-xl overflow-hidden">
+                <button
+                  type="button"
+                  className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-muted hover:bg-[var(--surface-hover)] transition-colors"
+                  onClick={() => setGradeSection((v) => !v)}
+                >
+                  <span className="flex items-center gap-2">
+                    <FileSpreadsheet size={15} />
+                    Import Grades (optional)
+                  </span>
+                  <ChevronDown
+                    size={14}
+                    className={cn(
+                      "transition-transform",
+                      gradeSection && "rotate-180",
+                    )}
+                  />
+                </button>
+                {gradeSection && (
+                  <div className="px-4 pb-4 pt-1 border-t border-border">
+                    {!importGradeCsv ? (
+                      <div>
+                        <label className="block text-sm text-muted mb-1.5">
+                          Grade CSV file
+                        </label>
+                        <input
+                          type="file"
+                          accept=".csv"
+                          className="block w-full text-sm text-muted file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border file:border-border file:text-sm file:font-medium file:bg-card file:text-foreground hover:file:bg-[var(--surface-hover)] file:cursor-pointer file:transition-colors"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            setImportGradeFile(f);
+                            const reader = new FileReader();
+                            reader.onload = (ev) => {
+                              const text = ev.target?.result as string;
+                              const parsed = parseCsvText(text);
+                              if (parsed.headers.length === 0) return;
+                              setImportGradeCsv(parsed);
+                              setImportGradeMapping(autoMatchGrade(parsed.headers));
+                            };
+                            reader.readAsText(f);
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <>
+                        {/* File info */}
+                        <div className="flex items-center justify-between gap-3 mb-3 p-2.5 bg-[var(--surface-hover)] rounded-lg">
+                          <div className="flex items-center gap-2 text-sm min-w-0">
+                            <FileSpreadsheet
+                              size={16}
+                              className="text-primary shrink-0"
+                            />
+                            <span className="font-medium text-foreground truncate">
+                              {importGradeFile?.name}
+                            </span>
+                            <span className="text-muted shrink-0">
+                              {importGradeCsv.totalRows} rows
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            className="p-1 rounded text-muted-light hover:text-foreground transition-colors shrink-0"
+                            onClick={() => {
+                              setImportGradeFile(null);
+                              setImportGradeCsv(null);
+                              setImportGradeMapping({
+                                query_text: "",
+                                grade: "",
+                                notes: null,
+                              });
+                            }}
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+
+                        {/* Column mapping */}
+                        <div className="space-y-2 mb-3">
+                          {(
+                            [
+                              {
+                                key: "query_text" as const,
+                                label: "Query Text",
+                                required: true,
+                              },
+                              {
+                                key: "grade" as const,
+                                label: "Grade",
+                                required: true,
+                              },
+                              {
+                                key: "notes" as const,
+                                label: "Notes",
+                                required: false,
+                              },
+                            ] as const
+                          ).map(({ key, label, required }) => (
+                            <div key={key} className="flex items-center gap-3">
+                              <label className="w-28 text-sm font-medium text-foreground shrink-0">
+                                {label}
+                                {required && (
+                                  <span className="text-destructive ml-0.5">
+                                    *
+                                  </span>
+                                )}
+                              </label>
+                              <select
+                                className={selectCls}
+                                value={
+                                  importGradeMapping[key] === null
+                                    ? "— skip —"
+                                    : importGradeMapping[key] || ""
+                                }
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setImportGradeMapping((m) => ({
+                                    ...m,
+                                    [key]:
+                                      val === "— skip —"
+                                        ? null
+                                        : val === ""
+                                          ? required
+                                            ? ""
+                                            : null
+                                          : val,
+                                  }));
+                                }}
+                              >
+                                {required ? (
+                                  <option value="">Select column...</option>
+                                ) : (
+                                  <option value="— skip —">— skip —</option>
+                                )}
+                                {importGradeCsv.headers.map((h) => (
+                                  <option key={h} value={h}>
+                                    {h}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Preview */}
+                        {importGradeCsv.rows.length > 0 && (
+                          <div className="overflow-x-auto rounded-lg border border-border">
+                            <table className="w-full text-xs border-collapse">
+                              <thead>
+                                <tr>
+                                  <th className="text-left p-2 bg-[var(--surface-hover)] font-medium text-muted uppercase">
+                                    Query Text
+                                  </th>
+                                  <th className="text-left p-2 bg-[var(--surface-hover)] font-medium text-muted uppercase">
+                                    Grade
+                                  </th>
+                                  <th className="text-left p-2 bg-[var(--surface-hover)] font-medium text-muted uppercase">
+                                    Notes
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {importGradeCsv.rows.slice(0, 3).map((row, i) => {
+                                  const getVal = (col: string | null) => {
+                                    if (!col) return "";
+                                    const idx =
+                                      importGradeCsv!.headers.indexOf(col);
+                                    return idx >= 0 ? row[idx] || "" : "";
+                                  };
+                                  return (
+                                    <tr
+                                      key={i}
+                                      className="border-t border-border"
+                                    >
+                                      <td className="p-2 text-foreground max-w-[200px] truncate">
+                                        {getVal(importGradeMapping.query_text)}
+                                      </td>
+                                      <td className="p-2 text-foreground">
+                                        {getVal(importGradeMapping.grade)}
+                                      </td>
+                                      <td className="p-2 text-muted max-w-[150px] truncate">
+                                        {getVal(importGradeMapping.notes)}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {importResult && (
                 <div
                   className={`text-sm mb-2 ${importResult.startsWith("Imported") ? "text-success" : "text-destructive"}`}
