@@ -17,4 +17,4 @@ start.sh
 
 Visit: [localhost:3000](http://localhost:3000)
 
-Backend API: [localhost:8000/api/docs](http://localhost:8000/docs)
+Backend API: [localhost:8000/docs](http://localhost:8000/docs)
