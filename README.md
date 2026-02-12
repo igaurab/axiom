@@ -15,5 +15,6 @@ Install npm:
 
 start.sh
 
-Visit: localhost:3000
-Backend API: localhost:8000/api/docs
+Visit: [localhost:3000](localhost:3000)
+
+Backend API: [localhost:8000/api/docs](localhost:8000/api/docs)
