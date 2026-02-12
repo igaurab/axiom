@@ -13,7 +13,7 @@ const groupColors = [
   { bg: "var(--tag-blue-bg)", label: "var(--tag-blue-text)" },
 ];
 
-interface GradeGroup {
+export interface GradeGroup {
   label: string;
   correct: number;
   partial: number;

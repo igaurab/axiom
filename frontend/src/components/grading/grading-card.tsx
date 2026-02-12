@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import type { ResultOut, GradeValue } from "@/lib/types";
 import { MarkdownRenderer } from "@/components/markdown/markdown-renderer";
 import { GradeButton } from "./grade-button";
 import { ReasoningDisplay } from "./reasoning-display";
 import { ToolPills } from "@/components/tool-calls/tool-pills";
+import { countByKind } from "@/lib/tool-call-utils";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -25,6 +26,8 @@ export function GradingCard({ result, onGrade, onOpenToolModal }: Props) {
   const grade = result.grade?.grade || "";
   const tokens = result.usage?.total_tokens ? result.usage.total_tokens.toLocaleString() : "N/A";
   const time = result.execution_time_seconds ? result.execution_time_seconds.toFixed(1) + "s" : "N/A";
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const counts = useMemo(() => countByKind(result.tool_calls), [result.tool_calls]);
 
   const handleToolClick = useCallback(
     (idx: number) => onOpenToolModal(result.id, idx),
@@ -92,7 +95,9 @@ export function GradingCard({ result, onGrade, onOpenToolModal }: Props) {
       <div className="mt-3 pt-3 border-t border-border text-sm text-muted flex gap-6 flex-wrap">
         <span><strong>Time:</strong> {time}</span>
         <span><strong>Tokens:</strong> {tokens}</span>
-        <span><strong>Tool Calls:</strong> {(result.tool_calls || []).length}</span>
+        {counts.tools > 0 && <span><strong>Tool Calls:</strong> {counts.tools}</span>}
+        {counts.searches > 0 && <span><strong>Web Searches:</strong> {counts.searches}</span>}
+        {counts.tools === 0 && counts.searches === 0 && <span><strong>Tool Calls:</strong> 0</span>}
       </div>
 
       <ToolPills toolCalls={result.tool_calls} onClickTool={handleToolClick} />

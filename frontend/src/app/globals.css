@@ -222,6 +222,19 @@ body::before {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
+/* Glass pill — ultra-transparent, for inline badges */
+.glass-pill {
+  background: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .glass-pill {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
 /* JSON search highlights */
 .jt-highlight {
   background: rgba(250, 204, 21, 0.35);

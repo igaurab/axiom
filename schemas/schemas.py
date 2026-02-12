@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Union
 
 from pydantic import BaseModel
 
@@ -61,7 +61,7 @@ class AgentCreate(BaseModel):
     model: str
     system_prompt: str | None = None
     source_code: str | None = None
-    tools_config: dict | None = None
+    tools_config: Union[dict, list, None] = None
     model_settings: dict | None = None
     tags: list[str] = []
 
@@ -72,7 +72,7 @@ class AgentUpdate(BaseModel):
     model: str | None = None
     system_prompt: str | None = None
     source_code: str | None = None
-    tools_config: dict | None = None
+    tools_config: Union[dict, list, None] = None
     model_settings: dict | None = None
     tags: list[str] | None = None
 
@@ -84,7 +84,7 @@ class AgentOut(BaseModel):
     model: str
     system_prompt: str | None
     source_code: str | None
-    tools_config: dict | None
+    tools_config: Union[dict, list, None]
     model_settings: dict | None
     tags: list[str]
     created_at: datetime

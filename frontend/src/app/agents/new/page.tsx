@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { agentsApi } from "@/lib/api/agents";
+import { parseAgentCode } from "@/lib/parsers/parse-agent-code";
 import { PageHeader } from "@/components/layout/page-header";
 
 const inputCls = "w-full px-3 py-2 rounded-lg text-sm outline-none transition-all bg-card border border-border text-foreground placeholder:text-muted-light focus:ring-2 focus:ring-ring/30 focus:border-ring/50";
@@ -76,7 +77,7 @@ export default function NewAgentPage() {
     setExtractMsg("Parsing...");
     setExtractColor("text-muted");
     try {
-      const data = await agentsApi.parseCode(code);
+      const data = await parseAgentCode(code);
       const extracted: string[] = [];
       if (data.name) { setAgName(data.name as string); extracted.push("name"); }
       if (data.model) { setAgModel(data.model as string); extracted.push("model"); }
@@ -128,7 +129,7 @@ export default function NewAgentPage() {
             {inputMode === "paste" && (
               <div>
                 <label className="block font-medium text-sm text-muted mb-1.5">Paste OpenAI Agent Code</label>
-                <textarea className={`${inputCls} text-xs font-mono resize-y`} rows={12} value={code} onChange={(e) => setCode(e.target.value)} placeholder="Paste your Python agent code here..." />
+                <textarea className={`${inputCls} text-xs font-mono resize-y`} rows={12} value={code} onChange={(e) => setCode(e.target.value)} placeholder="Paste your agent code here (Python or TypeScript)..." />
                 <div className="flex gap-2 mt-2">
                   <button type="button" className="px-4 py-2 bg-card border border-border rounded-lg font-semibold text-sm hover:bg-[var(--surface-hover)] text-foreground transition-colors" onClick={extractFromCode}>Extract Config</button>
                   {extractMsg && <span className={`text-sm self-center ${extractColor}`}>{extractMsg}</span>}

@@ -2,6 +2,7 @@
 
 import { useState, useMemo, type ReactNode } from "react";
 import type { ToolCall } from "@/lib/types";
+import { normalizeSteps, type NormalizedStep } from "@/lib/tool-call-utils";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -14,6 +15,7 @@ interface Props {
 
 function getSearchText(tc: ToolCall): string {
   let text = "";
+  // MCP tool call data
   if (tc.arguments) {
     try {
       const parsed = typeof tc.arguments === "string" ? JSON.parse(tc.arguments) : tc.arguments;
@@ -26,10 +28,16 @@ function getSearchText(tc: ToolCall): string {
       text += " " + JSON.stringify(parsed);
     } catch { text += " " + String(tc.response); }
   }
+  // Web search data (new format)
+  if (tc.query) text += " " + tc.query;
+  if (tc.url) text += " " + tc.url;
+  if (tc.pattern) text += " " + tc.pattern;
+  if (tc.sources) text += " " + JSON.stringify(tc.sources);
+  // Legacy format
+  if (tc.raw_items) text += " " + JSON.stringify(tc.raw_items);
   return text;
 }
 
-/** Count occurrences of `ql` (lowercased) in `text` */
 function countMatches(text: string, ql: string): number {
   if (!ql) return 0;
   const lower = text.toLowerCase();
@@ -42,7 +50,6 @@ function countMatches(text: string, ql: string): number {
   return count;
 }
 
-/** Render snippet with highlighted match text */
 function highlightSnippet(snippet: string, query: string): ReactNode {
   if (!query || !snippet) return snippet;
   const ql = query.toLowerCase();
@@ -65,8 +72,14 @@ function highlightSnippet(snippet: string, query: string): ReactNode {
   return <>{parts}</>;
 }
 
+const kindDotColor: Record<string, string> = {
+  tool: "bg-brand",
+  web_search: "bg-emerald-500",
+};
+
 export function ToolSidebar({ toolCalls, activeIdx, onSelect, onSearchChange, searchQuery }: Props) {
   const [localQuery, setLocalQuery] = useState(searchQuery);
+  const steps = useMemo(() => normalizeSteps(toolCalls), [toolCalls]);
 
   const filtered = useMemo(() => {
     if (!localQuery.trim()) return toolCalls.map((_, i) => ({ idx: i, match: true, snippet: "", matchCount: 0 }));
@@ -110,50 +123,70 @@ export function ToolSidebar({ toolCalls, activeIdx, onSelect, onSearchChange, se
         const totalMatches = filtered.reduce((sum, f) => sum + f.matchCount, 0);
         return (
           <div className="px-3 py-1.5 border-b border-border text-xs text-muted bg-[var(--surface)] shrink-0">
-            {totalMatches} {totalMatches === 1 ? "match" : "matches"} in {matchingItems.length} of {toolCalls.length} tool {toolCalls.length === 1 ? "call" : "calls"}
+            {totalMatches} {totalMatches === 1 ? "match" : "matches"} in {matchingItems.length} of {toolCalls.length} step{toolCalls.length === 1 ? "" : "s"}
           </div>
         );
       })()}
       <div className="flex-1 overflow-y-auto flex flex-col">
         {filtered.map((item) =>
           item.match ? (
-            <div
+            <SidebarItem
               key={item.idx}
-              className={cn(
-                "flex items-center gap-2 px-3 py-2 cursor-pointer border-b border-border text-sm transition-colors",
-                item.idx === activeIdx
-                  ? "bg-[var(--tag-blue-bg)] border-l-[3px] border-l-brand font-semibold"
-                  : "hover:bg-[var(--surface-hover)]"
-              )}
-              onClick={() => onSelect(item.idx)}
-            >
-              <span
-                className={cn(
-                  "w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0",
-                  item.idx === activeIdx
-                    ? "bg-brand text-white"
-                    : "bg-border text-muted"
-                )}
-              >
-                {item.idx + 1}
-              </span>
-              <div className="overflow-hidden flex-1 min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="truncate">{toolCalls[item.idx].name || "unknown"}</span>
-                  {item.matchCount > 0 && (
-                    <span className="shrink-0 text-[10px] bg-yellow-400/30 text-foreground/70 rounded px-1 font-medium">
-                      {item.matchCount} {item.matchCount === 1 ? "match" : "matches"}
-                    </span>
-                  )}
-                </div>
-                {item.snippet && (
-                  <div className="text-xs text-muted truncate mt-0.5">
-                    {highlightSnippet(item.snippet, localQuery)}
-                  </div>
-                )}
-              </div>
-            </div>
+              idx={item.idx}
+              step={steps[item.idx]}
+              active={item.idx === activeIdx}
+              snippet={item.snippet}
+              matchCount={item.matchCount}
+              localQuery={localQuery}
+              onSelect={onSelect}
+            />
           ) : null
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SidebarItem({
+  idx, step, active, snippet, matchCount, localQuery, onSelect,
+}: {
+  idx: number; step: NormalizedStep; active: boolean; snippet: string;
+  matchCount: number; localQuery: string; onSelect: (idx: number) => void;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-2 px-3 py-2 cursor-pointer border-b border-border text-sm transition-colors",
+        active
+          ? "bg-[var(--tag-blue-bg)] border-l-[3px] border-l-brand font-semibold"
+          : "hover:bg-[var(--surface-hover)]"
+      )}
+      onClick={() => onSelect(idx)}
+    >
+      <span
+        className={cn(
+          "w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0",
+          active ? kindDotColor[step.kind] + " text-white" : "bg-border text-muted"
+        )}
+      >
+        {idx + 1}
+      </span>
+      <div className="overflow-hidden flex-1 min-w-0">
+        <div className="flex items-center gap-1.5">
+          <span className="truncate text-xs">{step.label}</span>
+          {matchCount > 0 && (
+            <span className="shrink-0 text-[10px] bg-yellow-400/30 text-foreground/70 rounded px-1 font-medium">
+              {matchCount}
+            </span>
+          )}
+        </div>
+        {step.kind === "web_search" && !snippet && (
+          <div className="text-[10px] text-muted truncate mt-0.5">{step.detail}</div>
+        )}
+        {snippet && (
+          <div className="text-xs text-muted truncate mt-0.5">
+            {highlightSnippet(snippet, localQuery)}
+          </div>
         )}
       </div>
     </div>

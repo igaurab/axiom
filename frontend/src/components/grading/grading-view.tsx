@@ -6,13 +6,23 @@ import type { ResultOut, RunDetailOut, GradeValue, ToolCall } from "@/lib/types"
 import { resultsApi } from "@/lib/api/results";
 import { runsApi } from "@/lib/api/runs";
 import { gradesApi } from "@/lib/api/grades";
-import { GradeSummary, computeGradeGroups, computeCompareGradeGroups } from "./grade-summary";
+import { computeGradeGroups, computeCompareGradeGroups } from "./grade-summary";
+import type { GradeGroup } from "./grade-summary";
 import { GradingCard } from "./grading-card";
 import { CompareCard } from "./compare-card";
 import { QueryNav, buildQueryNavItems, buildSingleRunNavItems } from "./query-nav";
 import { ToolModal } from "@/components/tool-calls/tool-modal";
 import { RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+interface GradeBarData {
+  graded: number;
+  total: number;
+  pct: number;
+  groups: GradeGroup[];
+  isFetching: boolean;
+  onSync: () => void;
+}
 
 interface SingleProps {
   runId: number;
@@ -100,6 +110,26 @@ export function GradingView(props: Props) {
   const runs = data?.runs ?? [];
   const results = data?.results ?? {};
 
+  // Compute data for compare mode
+  const { allResults, queryIds: compareQueryIds } = useMemo(() => {
+    if (!isCompare) return { allResults: {} as Record<number, Record<number, ResultOut>>, queryIds: [] as number[] };
+    const all: Record<number, Record<number, ResultOut>> = {};
+    for (const rid of runIds) {
+      (results[rid] || []).forEach((r) => {
+        if (!all[r.query_id]) all[r.query_id] = {};
+        all[r.query_id][rid] = r;
+      });
+    }
+    const qids = Object.keys(all).map(Number).sort((a, b) => a - b);
+    return { allResults: all, queryIds: qids };
+  }, [isCompare, runIds, results]);
+
+  // Sorted results and query IDs for single-run mode
+  const singleSortedResults = useMemo(() => {
+    if (isCompare) return [];
+    return (results[runIds[0]] || []).slice().sort((a, b) => a.query_id - b.query_id);
+  }, [isCompare, results, runIds]);
+
   const gradeMutation = useMutation({
     mutationFn: ({ resultId, grade }: { resultId: number; grade: GradeValue }) =>
       gradesApi.upsert(resultId, { grade }),
@@ -122,15 +152,21 @@ export function GradingView(props: Props) {
 
   const handleGrade = useCallback(
     (resultId: number, grade: GradeValue, queryId?: number) => {
+      // For single-run mode, find the queryId from the result
+      let resolvedQueryId = queryId;
+      if (resolvedQueryId == null && !isCompare) {
+        const r = singleSortedResults.find((res) => res.id === resultId);
+        if (r) resolvedQueryId = r.query_id;
+      }
       gradeMutation.mutate({ resultId, grade }, {
         onSuccess: () => {
-          if (queryId != null && isCompare) {
-            setTimeout(() => setLastFullyGradedQuery(queryId), 0);
+          if (resolvedQueryId != null) {
+            setTimeout(() => setLastFullyGradedQuery(resolvedQueryId!), 0);
           }
         },
       });
     },
-    [gradeMutation, isCompare]
+    [gradeMutation, isCompare, singleSortedResults]
   );
 
   const handleOpenToolModal = useCallback(
@@ -151,56 +187,46 @@ export function GradingView(props: Props) {
     [runIds, results]
   );
 
-  // Compute data for compare mode
-  const { allResults, queryIds: compareQueryIds } = useMemo(() => {
-    if (!isCompare) return { allResults: {} as Record<number, Record<number, ResultOut>>, queryIds: [] as number[] };
-    const all: Record<number, Record<number, ResultOut>> = {};
-    for (const rid of runIds) {
-      (results[rid] || []).forEach((r) => {
-        if (!all[r.query_id]) all[r.query_id] = {};
-        all[r.query_id][rid] = r;
-      });
-    }
-    const qids = Object.keys(all).map(Number).sort((a, b) => a - b);
-    return { allResults: all, queryIds: qids };
-  }, [isCompare, runIds, results]);
-
-  // Sorted results and query IDs for single-run mode
-  const singleSortedResults = useMemo(() => {
-    if (isCompare) return [];
-    return (results[runIds[0]] || []).slice().sort((a, b) => a.query_id - b.query_id);
-  }, [isCompare, results, runIds]);
-
   const singleQueryIds = useMemo(() => singleSortedResults.map((r) => r.query_id), [singleSortedResults]);
 
   // Unified queryIds for both modes
   const queryIds = isCompare ? compareQueryIds : singleQueryIds;
 
-  // Auto-scroll to next ungraded query card (compare mode only)
+  // Auto-scroll to next ungraded query card
   useEffect(() => {
-    if (lastFullyGradedQuery == null || !isCompare) return;
+    if (lastFullyGradedQuery == null) return;
     setLastFullyGradedQuery(null);
 
-    const qResults = allResults[lastFullyGradedQuery];
-    if (!qResults) return;
-    const allGraded = runIds.every((rid) => qResults[rid]?.grade?.grade);
-    if (!allGraded) return;
+    if (isCompare) {
+      const qResults = allResults[lastFullyGradedQuery];
+      if (!qResults) return;
+      const allGraded = runIds.every((rid) => qResults[rid]?.grade?.grade);
+      if (!allGraded) return;
 
-    const idx = compareQueryIds.indexOf(lastFullyGradedQuery);
-    for (let i = idx + 1; i < compareQueryIds.length; i++) {
-      const nextQid = compareQueryIds[i];
-      const nextResults = allResults[nextQid];
-      if (!nextResults) continue;
-      const hasUngraded = runIds.some((rid) => !nextResults[rid]?.grade?.grade);
-      if (hasUngraded) {
-        const el = cardRefs.current[nextQid];
-        if (el) {
-          el.scrollIntoView({ behavior: "smooth", block: "start" });
+      const idx = compareQueryIds.indexOf(lastFullyGradedQuery);
+      for (let i = idx + 1; i < compareQueryIds.length; i++) {
+        const nextQid = compareQueryIds[i];
+        const nextResults = allResults[nextQid];
+        if (!nextResults) continue;
+        const hasUngraded = runIds.some((rid) => !nextResults[rid]?.grade?.grade);
+        if (hasUngraded) {
+          const el = cardRefs.current[nextQid];
+          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+          return;
         }
-        return;
+      }
+    } else {
+      // Single-run: scroll to next ungraded
+      const idx = singleSortedResults.findIndex((r) => r.query_id === lastFullyGradedQuery);
+      for (let i = idx + 1; i < singleSortedResults.length; i++) {
+        if (!singleSortedResults[i].grade?.grade) {
+          const el = cardRefs.current[singleSortedResults[i].query_id];
+          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+          return;
+        }
       }
     }
-  }, [lastFullyGradedQuery, isCompare, allResults, runIds, compareQueryIds]);
+  }, [lastFullyGradedQuery, isCompare, allResults, runIds, compareQueryIds, singleSortedResults]);
 
   // IntersectionObserver to track visible query card
   useEffect(() => {
@@ -274,9 +300,9 @@ export function GradingView(props: Props) {
   const graded = gradeGroups.reduce((sum, g) => sum + g.correct + g.partial + g.wrong, 0);
   const pct = totalResults ? Math.round((graded / totalResults) * 100) : 0;
 
-  const handleSync = () => {
+  const handleSync = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: qKey });
-  };
+  }, [queryClient, qKey]);
 
   // --- Skeleton loading ---
   if (isLoading && !data) {
@@ -303,28 +329,14 @@ export function GradingView(props: Props) {
         />
       )}
 
-      {/* Progress + sync */}
-      <div className="flex items-center justify-center gap-3 text-sm text-muted mb-4">
-        <span>
-          {graded}/{totalResults} graded
-          <span className="inline-block w-48 h-2 bg-border rounded-full mx-2 align-middle">
-            <span className="block h-full bg-brand rounded-full transition-all" style={{ width: `${pct}%` }} />
-          </span>
-          {pct}%
-        </span>
-        <button
-          onClick={handleSync}
-          title="Refresh data from server"
-          className={cn(
-            "p-1.5 rounded-lg text-muted-light hover:text-primary hover:bg-primary/10 transition-colors",
-            isFetching && "animate-spin-slow"
-          )}
-        >
-          <RefreshCw size={14} />
-        </button>
-      </div>
-
-      <GradeSummary groups={gradeGroups} />
+      <FloatingGradeBar
+        graded={graded}
+        total={totalResults}
+        pct={pct}
+        groups={gradeGroups}
+        isFetching={isFetching}
+        onSync={handleSync}
+      />
 
       {isCompare ? (
         queryIds.map((qid) => {
@@ -363,6 +375,106 @@ export function GradingView(props: Props) {
           onClose={() => setToolModal(null)}
         />
       )}
+    </>
+  );
+}
+
+// --- Skeleton component ---
+// --- Floating grade bar ---
+const floatingGroupColors = [
+  { bg: "var(--tag-blue-bg)", label: "var(--tag-blue-text)" },
+  { bg: "var(--tag-orange-bg)", label: "var(--tag-orange-text)" },
+  { bg: "var(--tag-green-bg)", label: "var(--tag-green-text)" },
+  { bg: "var(--tag-purple-bg)", label: "var(--tag-purple-text)" },
+];
+
+export function FloatingGradeBar({
+  graded, total, pct, groups, isFetching, onSync,
+}: {
+  graded: number; total: number; pct: number; groups: GradeGroup[];
+  isFetching: boolean; onSync: () => void;
+}) {
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const [pinned, setPinned] = useState(false);
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setPinned(!entry.isIntersecting),
+      { threshold: 0, rootMargin: "-56px 0px 0px 0px" }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <>
+      <div ref={sentinelRef} className="h-0 w-full" />
+      <div className={cn(
+        "z-40 flex justify-center mb-4 transition-all duration-300 ease-out",
+        pinned
+          ? "fixed bottom-4 left-1/2 -translate-x-1/2"
+          : ""
+      )}>
+        <div className={cn(
+          "glass-opaque rounded-2xl overflow-hidden inline-flex flex-col transition-all duration-300",
+          pinned ? "shadow-xl" : "shadow-md"
+        )}>
+          {/* Content */}
+          <div className="px-4 py-2 flex items-center gap-3">
+            {/* Grade groups */}
+            <div className="flex items-center gap-3 flex-wrap flex-1 min-w-0">
+              {groups.map((g, i) => {
+                const colors = floatingGroupColors[i % floatingGroupColors.length];
+                return (
+                  <div
+                    key={i}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
+                    style={{ background: colors.bg }}
+                  >
+                    <span
+                      className="font-bold text-xs truncate max-w-[100px]"
+                      style={{ color: colors.label }}
+                      title={g.label}
+                    >
+                      {g.label}
+                    </span>
+                    <span className="inline-flex items-center rounded-xl px-1.5 py-px text-xs font-semibold bg-grade-correct-bg text-grade-correct-text">{g.correct}</span>
+                    <span className="inline-flex items-center rounded-xl px-1.5 py-px text-xs font-semibold bg-grade-partial-bg text-grade-partial-text">{g.partial}</span>
+                    <span className="inline-flex items-center rounded-xl px-1.5 py-px text-xs font-semibold bg-grade-wrong-bg text-grade-wrong-text">{g.wrong}</span>
+                    <span className="inline-flex items-center rounded-xl px-1.5 py-px text-xs font-semibold bg-grade-pending-bg text-grade-pending-text">{g.pending}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Right: count + sync */}
+            <div className="flex items-center gap-2 text-xs text-muted shrink-0">
+              <span className="font-semibold">{graded}/{total}</span>
+              <span className="text-muted-light">{pct}%</span>
+              <button
+                onClick={onSync}
+                title="Refresh"
+                className={cn(
+                  "p-1 rounded text-muted-light hover:text-primary hover:bg-primary/10 transition-colors",
+                  isFetching && "animate-spin-slow"
+                )}
+              >
+                <RefreshCw size={12} />
+              </button>
+            </div>
+          </div>
+
+          {/* Progress bar along the bottom edge */}
+          <div className="h-[3px] bg-border/40">
+            <div
+              className="h-full bg-brand rounded-r-full transition-all duration-500"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        </div>
+      </div>
     </>
   );
 }

@@ -29,6 +29,16 @@ def _web_search_calls(tool_calls: list[dict] | None) -> int:
         return 0
     count = 0
     for call in tool_calls:
+        # New executor format
+        if call.get("type") == "web_search":
+            count += 1
+            continue
+        # Legacy imported format
+        raw = call.get("raw_items")
+        if isinstance(raw, dict) and raw.get("type") == "web_search_call":
+            count += 1
+            continue
+        # Fallback: check name field
         name = str(call.get("name") or "").lower()
         if "web_search" in name or "web-search" in name:
             count += 1

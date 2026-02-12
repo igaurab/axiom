@@ -1,24 +1,36 @@
 "use client";
 
 import type { ToolCall } from "@/lib/types";
+import { normalizeSteps } from "@/lib/tool-call-utils";
+import { cn } from "@/lib/utils";
 
 interface Props {
   toolCalls: ToolCall[] | null;
   onClickTool: (idx: number) => void;
 }
 
+const kindStyles = {
+  tool: "bg-[var(--tag-blue-bg)] text-[var(--tag-blue-text)] hover:bg-primary hover:text-primary-foreground",
+  web_search: "glass-pill text-muted-light hover:text-foreground",
+};
+
 export function ToolPills({ toolCalls, onClickTool }: Props) {
-  if (!toolCalls?.length) return null;
+  const steps = normalizeSteps(toolCalls);
+  if (!steps.length) return null;
 
   return (
-    <div className="text-sm text-muted mt-2 p-2 px-3 bg-[var(--surface-hover)] rounded-md break-words">
-      {toolCalls.map((tc, i) => (
+    <div className="text-sm text-muted mt-2 p-2 px-3 bg-card rounded-lg border border-border/60 shadow-[inset_0_0.5px_0_rgba(255,255,255,0.06)] break-words">
+      {steps.map((step, i) => (
         <span
           key={i}
           onClick={(e) => { e.stopPropagation(); onClickTool(i); }}
-          className="inline-block px-1.5 py-0.5 m-0.5 bg-[var(--tag-blue-bg)] text-[var(--tag-blue-text)] rounded text-xs font-semibold cursor-pointer transition-all hover:bg-primary hover:text-primary-foreground hover:-translate-y-px hover:shadow-md"
+          className={cn(
+            "inline-block px-1.5 py-0.5 m-0.5 rounded text-xs font-semibold cursor-pointer transition-all hover:-translate-y-px hover:shadow-md",
+            kindStyles[step.kind],
+          )}
+          title={step.kind === "web_search" ? step.detail : step.label}
         >
-          {tc.name || "unknown"}
+          {step.label}
         </span>
       ))}
     </div>

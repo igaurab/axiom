@@ -17,6 +17,7 @@ from api import (
     agents,
     analytics,
     browse,
+    charts,
     comparisons,
     export,
     grades,
@@ -78,6 +79,7 @@ app.include_router(browse.router, prefix="/api/browse", tags=["browse"])
 app.include_router(comparisons.router, prefix="/api/comparisons", tags=["comparisons"])
 app.include_router(traces.router, prefix="/api/traces", tags=["traces"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
+app.include_router(charts.router, prefix="/api/charts", tags=["charts"])
 
 # Page routes
 app.include_router(views.router)

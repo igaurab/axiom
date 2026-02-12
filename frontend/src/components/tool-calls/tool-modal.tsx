@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import type { ToolCall } from "@/lib/types";
+import { normalizeSteps } from "@/lib/tool-call-utils";
 import { ToolSidebar } from "./tool-sidebar";
 import { ToolContent } from "./tool-content";
 import { FullscreenViewer } from "@/components/json/fullscreen-viewer";
@@ -20,6 +21,8 @@ export function ToolModal({ toolCalls, initialIdx = 0, queryLabel, runLabel, onC
   const [fullscreen, setFullscreen] = useState<{ which: "args" | "resp" } | null>(null);
 
   const tc = toolCalls[activeIdx];
+  const steps = useMemo(() => normalizeSteps(toolCalls), [toolCalls]);
+  const currentStep = steps[activeIdx];
 
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
@@ -46,13 +49,17 @@ export function ToolModal({ toolCalls, initialIdx = 0, queryLabel, runLabel, onC
   }, []);
 
   if (fullscreen) {
-    const data = fullscreen.which === "args" ? tc.arguments : tc.response;
-    const label = fullscreen.which === "args" ? "Input (Arguments)" : "Output (Response)";
+    const isWebSearch = currentStep?.kind === "web_search";
+    const data = isWebSearch
+      ? (tc.raw_items || tc)
+      : (fullscreen.which === "args" ? tc.arguments : tc.response);
+    const label = isWebSearch ? "Raw Data" : (fullscreen.which === "args" ? "Input (Arguments)" : "Output (Response)");
+    const name = currentStep?.label || tc.name || "unknown";
     return (
       <div className="fixed inset-0 bg-black/50 z-[1000] flex items-center justify-center" onClick={(e) => e.target === e.currentTarget && setFullscreen(null)}>
         <FullscreenViewer
           data={data}
-          title={`${tc.name || "unknown"} — ${label}`}
+          title={`${name} — ${label}`}
           initialQuery={searchQuery}
           onClose={() => setFullscreen(null)}
         />
@@ -69,8 +76,12 @@ export function ToolModal({ toolCalls, initialIdx = 0, queryLabel, runLabel, onC
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-3 border-b-2 border-border shrink-0">
           <h3 className="text-lg text-brand-dark flex items-center gap-2">
-            <span className="bg-[var(--tag-blue-bg)] text-[var(--tag-blue-text)] rounded px-2 py-0.5 text-sm font-semibold">
-              {tc?.name || "unknown"}
+            <span className={`rounded px-2 py-0.5 text-sm font-semibold ${
+              currentStep?.kind === "web_search"
+                ? "bg-[var(--tag-teal-bg,var(--tag-green-bg))] text-[var(--tag-teal-text,var(--tag-green-text))]"
+                : "bg-[var(--tag-blue-bg)] text-[var(--tag-blue-text)]"
+            }`}>
+              {currentStep?.label || tc?.name || "unknown"}
             </span>
             <span className="text-xs text-muted font-normal">
               Step {activeIdx + 1} of {toolCalls.length}

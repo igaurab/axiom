@@ -133,12 +133,30 @@ def parse_agent_code(code: str) -> dict:
         if ms_node:
             result["model_settings"] = _eval_literal(ms_node)
 
-    # --- Find HostedMCPTool(tool_config={...}) ---
+    # --- Extract all tools ---
+    tools_list = []
+
+    # HostedMCPTool(tool_config={...})
     mcp_calls = _find_calls(tree, "HostedMCPTool")
-    if mcp_calls:
-        tc_node = _get_kwarg(mcp_calls[0], "tool_config")
+    for call in mcp_calls:
+        tc_node = _get_kwarg(call, "tool_config")
         if tc_node:
-            result["tools_config"] = _eval_literal(tc_node)
+            tools_list.append(_eval_literal(tc_node))
+
+    # WebSearchTool(user_location={...}, search_context_size="...")
+    ws_calls = _find_calls(tree, "WebSearchTool")
+    for call in ws_calls:
+        ws_config: dict = {"type": "web_search"}
+        loc_node = _get_kwarg(call, "user_location")
+        if loc_node:
+            ws_config["user_location"] = _eval_literal(loc_node)
+        ctx_node = _get_kwarg(call, "search_context_size")
+        if ctx_node:
+            ws_config["search_context_size"] = _eval_literal(ctx_node)
+        tools_list.append(ws_config)
+
+    if tools_list:
+        result["tools_config"] = tools_list
 
     return result
 

@@ -19,7 +19,8 @@ function ConfigSection({ config }: { config: RunConfig }) {
     const tc = agent.tools_config;
     if (Array.isArray(tc)) {
       tc.forEach((item: Record<string, unknown>) => {
-        if (Array.isArray(item.allowed_tools)) toolsList.push(...(item.allowed_tools as string[]));
+        if (item.type === "web_search") toolsList.push("web_search");
+        else if (Array.isArray(item.allowed_tools)) toolsList.push(...(item.allowed_tools as string[]));
         else if (item.name) toolsList.push(item.name as string);
       });
     } else if (tc.allowed_tools && Array.isArray(tc.allowed_tools)) {

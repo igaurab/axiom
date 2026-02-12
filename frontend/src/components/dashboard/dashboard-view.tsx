@@ -23,7 +23,7 @@ export function DashboardView({ runId }: Props) {
 
   return (
     <>
-      <AccuracyOverview gradeCounts={data.grade_counts} />
+      <AccuracyOverview gradeCounts={data.grade_counts} runLabel={data.label} runId={runId} />
       <AccuracyByType byType={data.by_type} />
       <PerformanceStats performance={data.performance} />
       <ToolUsageChart toolUsage={data.tool_usage} />

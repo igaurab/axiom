@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { agentsApi } from "@/lib/api/agents";
+import { parseAgentCode } from "@/lib/parsers/parse-agent-code";
 import type { AgentOut } from "@/lib/types";
 import { PageHeader } from "@/components/layout/page-header";
 import { TagBadge } from "@/components/ui/tag-badge";
@@ -12,7 +13,7 @@ import { MarkdownRenderer } from "@/components/markdown/markdown-renderer";
 import { formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import {
-  X, Pencil, Copy, Trash2, Save,
+  X, Pencil, Copy, Check, Trash2, Save,
   FileText, Wrench, Settings, Cpu, Cog, Calendar, Info,
   SquarePen, Eye, ClipboardPaste,
 } from "lucide-react";
@@ -20,12 +21,14 @@ import { encodingForModel } from "js-tiktoken";
 import Editor from "react-simple-code-editor";
 import hljs from "highlight.js/lib/core";
 import python from "highlight.js/lib/languages/python";
-import "highlight.js/styles/github-dark-dimmed.css";
+import typescript from "highlight.js/lib/languages/typescript";
+import "@/styles/hljs-theme.css";
 
 hljs.registerLanguage("python", python);
+hljs.registerLanguage("typescript", typescript);
 
-const highlightPython = (code: string) =>
-  hljs.highlight(code, { language: "python" }).value;
+const highlightCode = (code: string) =>
+  hljs.highlightAuto(code, ["python", "typescript"]).value;
 
 // ---------------------------------------------------------------------------
 // Types & constants
@@ -53,7 +56,8 @@ function getToolsList(a: AgentOut): string[] {
   const tools: string[] = [];
   if (Array.isArray(tc)) {
     tc.forEach((item: Record<string, unknown>) => {
-      if (Array.isArray(item.allowed_tools)) tools.push(...(item.allowed_tools as string[]));
+      if (item.type === "web_search") tools.push("web_search");
+      else if (Array.isArray(item.allowed_tools)) tools.push(...(item.allowed_tools as string[]));
       else if (item.name) tools.push(item.name as string);
     });
   } else if (tc.allowed_tools && Array.isArray(tc.allowed_tools)) {
@@ -151,14 +155,29 @@ function useTokenCount(text: string | null | undefined) {
 }
 
 function PromptView({ agent }: { agent: AgentOut }) {
+  const [copied, setCopied] = useState(false);
+
   if (!agent.system_prompt) {
     return <EmptySection label="No system prompt configured" />;
   }
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(agent.system_prompt!);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   return (
-    <div
-      className="p-6 prompt-markdown text-foreground text-base"
+    <div className="relative p-6 prompt-markdown text-foreground text-base"
       style={{ fontFamily: "var(--font-roboto-condensed), 'Roboto Condensed', sans-serif" }}
     >
+      <button
+        onClick={handleCopy}
+        className="absolute top-4 right-4 p-1.5 rounded-md text-muted-light hover:text-foreground hover:bg-surface-hover transition-colors"
+        title="Copy markdown"
+      >
+        {copied ? <Check size={16} className="text-green-500" /> : <Copy size={16} />}
+      </button>
       <MarkdownRenderer
         content={agent.system_prompt}
         className="max-w-none [&_pre]:bg-[var(--surface-hover)] [&_pre]:p-3 [&_pre]:rounded-md [&_pre]:overflow-x-auto [&_code]:bg-[var(--surface-hover)] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-sm"
@@ -204,7 +223,7 @@ function EmptySection({ label }: { label: string }) {
 function PasteCodeView({ agent }: { agent: AgentOut }) {
   const highlighted = useMemo(() => {
     if (!agent.source_code) return "";
-    return hljs.highlight(agent.source_code, { language: "python" }).value;
+    return hljs.highlightAuto(agent.source_code, ["python", "typescript"]).value;
   }, [agent.source_code]);
 
   if (!agent.source_code) {
@@ -214,7 +233,7 @@ function PasteCodeView({ agent }: { agent: AgentOut }) {
     <div className="p-6">
       <pre className="rounded-lg border border-border max-h-[70vh] overflow-y-auto !m-0">
         <code
-          className="hljs language-python text-xs !leading-relaxed"
+          className="hljs text-xs !leading-relaxed"
           dangerouslySetInnerHTML={{ __html: highlighted }}
         />
       </pre>
@@ -310,7 +329,7 @@ function PasteCodeEdit({ form, setForm }: { form: FormState; setForm: (f: FormSt
     setMsg("Parsing...");
     setMsgColor("text-muted");
     try {
-      const data = await agentsApi.parseCode(form.sourceCode);
+      const data = await parseAgentCode(form.sourceCode);
       const extracted: string[] = [];
       const updates = { ...form };
       if (data.name) { updates.name = data.name as string; extracted.push("name"); }
@@ -351,11 +370,11 @@ function PasteCodeEdit({ form, setForm }: { form: FormState; setForm: (f: FormSt
         <Editor
           value={form.sourceCode}
           onValueChange={(code) => setForm({ ...form, sourceCode: code })}
-          highlight={highlightPython}
+          highlight={highlightCode}
           padding={24}
           className="hljs min-h-full"
           style={{ fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.7 }}
-          placeholder="Paste your Python agent code here..."
+          placeholder="Paste your agent code here (Python or TypeScript)..."
         />
       </div>
     </div>

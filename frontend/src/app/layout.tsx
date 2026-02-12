@@ -35,7 +35,7 @@ export default function RootLayout({
           <Suspense>
             <TagFilterProvider>
               <Navbar />
-              <main className="max-w-[1400px] mx-auto p-6">{children}</main>
+              <main className="max-w-[1400px] mx-auto px-4 py-4 md:p-6">{children}</main>
             </TagFilterProvider>
           </Suspense>
         </QueryProvider>

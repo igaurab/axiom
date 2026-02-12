@@ -10,7 +10,14 @@ class OpenAIAgentsExecutor(AgentExecutor):
         return "openai_agents"
 
     async def execute(self, query: str, config: dict) -> ExecutionResult:
-        from agents import Agent, HostedMCPTool, ModelSettings, RunConfig, Runner
+        from agents import (
+            Agent,
+            HostedMCPTool,
+            ModelSettings,
+            RunConfig,
+            Runner,
+            WebSearchTool,
+        )
         from agents.items import ReasoningItem, ToolCallItem
         from openai.types.shared.reasoning import Reasoning
 
@@ -18,18 +25,41 @@ class OpenAIAgentsExecutor(AgentExecutor):
         try:
             # Build tools
             tools = []
-            tc = config.get("tools_config")
-            if tc and tc.get("type") == "mcp":
-                mcp = HostedMCPTool(
-                    tool_config={
-                        "type": "mcp",
-                        "server_label": tc.get("server_label", "MCP Server"),
-                        "allowed_tools": tc.get("allowed_tools", []),
-                        "require_approval": "never",
-                        "server_url": tc.get("server_url", ""),
-                    }
-                )
-                tools = [mcp]
+            tc_raw = config.get("tools_config")
+            # Normalise to list (legacy single-dict format still supported)
+            tc_list: list[dict] = []
+            if isinstance(tc_raw, list):
+                tc_list = tc_raw
+            elif isinstance(tc_raw, dict):
+                tc_list = [tc_raw]
+
+            for tc in tc_list:
+                if not isinstance(tc, dict):
+                    continue
+                tool_type = tc.get("type")
+                if tool_type == "mcp":
+                    tools.append(
+                        HostedMCPTool(
+                            tool_config={
+                                "type": "mcp",
+                                "server_label": tc.get(
+                                    "server_label", "MCP Server"
+                                ),
+                                "allowed_tools": tc.get("allowed_tools", []),
+                                "require_approval": "never",
+                                "server_url": tc.get("server_url", ""),
+                            }
+                        )
+                    )
+                elif tool_type == "web_search":
+                    ws_kwargs: dict = {}
+                    if tc.get("user_location"):
+                        ws_kwargs["user_location"] = tc["user_location"]
+                    if tc.get("search_context_size"):
+                        ws_kwargs["search_context_size"] = tc[
+                            "search_context_size"
+                        ]
+                    tools.append(WebSearchTool(**ws_kwargs))
 
             # Build model settings
             ms_raw = config.get("model_settings", {}) or {}
@@ -76,15 +106,51 @@ class OpenAIAgentsExecutor(AgentExecutor):
             for item in result.new_items:
                 if isinstance(item, ToolCallItem):
                     raw = item.raw_item
-                    tc_entry = {
-                        "name": getattr(raw, "name", "unknown"),
-                        "arguments": getattr(raw, "arguments", "{}"),
-                    }
-                    if hasattr(raw, "output") and raw.output:
-                        tc_entry["response"] = raw.output
-                    elif hasattr(raw, "content"):
-                        tc_entry["response"] = str(raw.content)
-                    tool_calls.append(tc_entry)
+                    raw_type = getattr(raw, "type", "")
+
+                    if raw_type == "web_search_call":
+                        # Web search item — extract action details
+                        action = getattr(raw, "action", None)
+                        tc_entry: dict[str, Any] = {
+                            "type": "web_search",
+                            "name": "web_search",
+                            "status": getattr(raw, "status", ""),
+                        }
+                        if action:
+                            action_type = getattr(action, "type", "")
+                            tc_entry["action_type"] = action_type
+                            if action_type == "search":
+                                tc_entry["query"] = getattr(
+                                    action, "query", ""
+                                )
+                                sources = getattr(action, "sources", None)
+                                if sources:
+                                    tc_entry["sources"] = [
+                                        {
+                                            "url": getattr(s, "url", ""),
+                                        }
+                                        for s in sources
+                                    ]
+                            elif action_type in ("open_page", "find_in_page"):
+                                tc_entry["url"] = getattr(
+                                    action, "url", ""
+                                )
+                                if action_type == "find_in_page":
+                                    tc_entry["pattern"] = getattr(
+                                        action, "pattern", ""
+                                    )
+                        tool_calls.append(tc_entry)
+                    else:
+                        # MCP / function tool call
+                        tc_entry = {
+                            "name": getattr(raw, "name", "unknown"),
+                            "arguments": getattr(raw, "arguments", "{}"),
+                        }
+                        if hasattr(raw, "output") and raw.output:
+                            tc_entry["response"] = raw.output
+                        elif hasattr(raw, "content"):
+                            tc_entry["response"] = str(raw.content)
+                        tool_calls.append(tc_entry)
                 elif isinstance(item, ReasoningItem):
                     raw = item.raw_item
                     r_entry = {}

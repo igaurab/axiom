@@ -1,8 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { AreaChart } from "lucide-react";
 import { analyticsApi } from "@/lib/api/analytics";
 import type { RunAnalyticsOut, CompareAnalyticsOut } from "@/lib/types";
+import { AccuracyChartModal } from "./accuracy-chart-modal";
 
 interface Props {
   runIds: number[];
@@ -11,6 +14,7 @@ interface Props {
 const barColors = ["#0066cc", "#ff9800", "#28a745", "#9c27b0", "#dc3545"];
 
 export function CompareDashboard({ runIds }: Props) {
+  const [chartOpen, setChartOpen] = useState(false);
   const { data, isLoading } = useQuery({
     queryKey: ["compare-analytics", runIds.join(",")],
     queryFn: () => analyticsApi.compare(runIds),
@@ -24,7 +28,16 @@ export function CompareDashboard({ runIds }: Props) {
     <>
       {/* Accuracy Overview */}
       <div className="bg-card rounded-xl p-6 px-8 mb-6 shadow-sm">
-        <h2 className="text-lg font-semibold mb-4 pb-2 border-b-2 border-border text-brand-dark">Accuracy Overview</h2>
+        <div className="flex items-center justify-between mb-4 pb-2 border-b-2 border-border">
+          <h2 className="text-lg font-semibold text-brand-dark">Accuracy Overview</h2>
+          <button
+            onClick={() => setChartOpen(true)}
+            className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-[var(--surface-hover)] transition-colors"
+            title="Show accuracy chart"
+          >
+            <AreaChart className="w-[18px] h-[18px]" />
+          </button>
+        </div>
         <table className="w-full text-sm">
           <thead>
             <tr>
@@ -117,6 +130,13 @@ export function CompareDashboard({ runIds }: Props) {
 
       {/* Tool usage comparison */}
       <ToolUsageComparison runs={runs} />
+
+      <AccuracyChartModal
+        open={chartOpen}
+        onClose={() => setChartOpen(false)}
+        runs={runs.map((r) => ({ label: r.label, gradeCounts: r.grade_counts }))}
+        runIds={runIds}
+      />
     </>
   );
 }

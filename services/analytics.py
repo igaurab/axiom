@@ -18,6 +18,20 @@ from schemas.schemas import (
 from services.openai_pricing import calculate_cost, get_rate_card
 
 
+def _tool_call_label(tc: dict) -> str:
+    """Return a display label for a tool call entry."""
+    # New executor format: type == "web_search"
+    if tc.get("type") == "web_search":
+        action = tc.get("action_type", "search")
+        return f"web_search:{action}"
+    # Legacy imported format: raw_items.type == "web_search_call"
+    raw = tc.get("raw_items")
+    if isinstance(raw, dict) and raw.get("type") == "web_search_call":
+        action = raw.get("action", {})
+        return f"web_search:{action.get('type', 'search')}" if isinstance(action, dict) else "web_search"
+    return tc.get("name") or "unknown"
+
+
 def _compute_stats(values: list[float]) -> StatsOut:
     if not values:
         return StatsOut()
@@ -112,7 +126,8 @@ async def compute_run_analytics(run_id: int, db: AsyncSession) -> RunAnalyticsOu
     for r in results:
         if r.tool_calls:
             for tc in r.tool_calls:
-                tool_counter[tc.get("name", "unknown")] += 1
+                label = _tool_call_label(tc)
+                tool_counter[label] += 1
 
     # Cost summary + per-query cost breakdown
     cost_totals = {
