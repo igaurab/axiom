@@ -24,7 +24,7 @@ export DATABASE_URL_SYNC="postgresql://postgres:postgres@localhost:${POSTGRES_HO
 
 # ---------- PostgreSQL (Docker) ----------
 echo "Starting PostgreSQL..."
-docker compose -f "$APP_DIR/docker-compose.yml" up -d db
+docker-compose -f "$APP_DIR/docker-compose.yml" up -d db
 
 # Wait for healthy
 echo -n "Waiting for DB"
