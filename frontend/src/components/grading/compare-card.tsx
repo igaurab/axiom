@@ -8,6 +8,7 @@ import { ReasoningDisplay } from "./reasoning-display";
 import { ToolPills } from "@/components/tool-calls/tool-pills";
 import { countByKind } from "@/lib/tool-call-utils";
 import { cn } from "@/lib/utils";
+import { SplitCompareModal } from "./split-compare-modal";
 
 interface Props {
   queryId: number;
@@ -35,6 +36,15 @@ const dotColors: Record<string, string> = {
 export function CompareCard({ queryId, query, runs, resultsByRun, onGrade, onOpenToolModal, isActive }: Props) {
   const [activeTab, setActiveTab] = useState(0);
   const [tabsMinimized, setTabsMinimized] = useState(false);
+  const [splitCompare, setSplitCompare] = useState<{ left: number; right: number } | null>(null);
+
+  const handleTabClick = useCallback((e: React.MouseEvent, idx: number) => {
+    if (e.shiftKey && runs.length > 1 && idx !== activeTab) {
+      setSplitCompare({ left: activeTab, right: idx });
+    } else {
+      setActiveTab(idx);
+    }
+  }, [activeTab, runs.length]);
 
   // Tab / Shift+Tab to cycle agent tabs when this card is active
   useEffect(() => {
@@ -104,7 +114,7 @@ export function CompareCard({ queryId, query, runs, resultsByRun, onGrade, onOpe
                   dotColors[grade],
                   idx === activeTab && "ring-2 ring-brand ring-offset-1 ring-offset-[var(--surface-hover)]"
                 )}
-                onClick={() => setActiveTab(idx)}
+                onClick={(e) => handleTabClick(e, idx)}
               />
             );
           })}
@@ -132,7 +142,7 @@ export function CompareCard({ queryId, query, runs, resultsByRun, onGrade, onOpe
                     ? "text-foreground bg-card border-b-brand"
                     : "hover:bg-[var(--surface)] hover:text-foreground"
                 )}
-                onClick={() => setActiveTab(idx)}
+                onClick={(e) => handleTabClick(e, idx)}
               >
                 {run.label}
                 <span className={cn("w-2.5 h-2.5 rounded-full inline-block ml-1.5", dotColors[grade])} />
@@ -149,6 +159,21 @@ export function CompareCard({ queryId, query, runs, resultsByRun, onGrade, onOpe
             </svg>
           </button>
         </div>
+      )}
+
+      {/* Split compare modal */}
+      {splitCompare && (
+        <SplitCompareModal
+          queryId={queryId}
+          query={query}
+          runs={runs}
+          resultsByRun={resultsByRun}
+          initialLeft={splitCompare.left}
+          initialRight={splitCompare.right}
+          onGrade={onGrade}
+          onOpenToolModal={onOpenToolModal}
+          onClose={() => setSplitCompare(null)}
+        />
       )}
 
       {/* Tab panels */}

@@ -12,7 +12,7 @@ import { GradingCard } from "./grading-card";
 import { CompareCard } from "./compare-card";
 import { QueryNav, buildQueryNavItems, buildSingleRunNavItems } from "./query-nav";
 import { ToolModal } from "@/components/tool-calls/tool-modal";
-import { RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
+import { RefreshCw, ChevronDown, ChevronUp, ArrowUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface GradeBarData {
@@ -352,6 +352,17 @@ export function GradingView(props: Props) {
     }, 800);
   }, []);
 
+  // Keyboard shortcut: '.' scroll to top
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      if (e.key !== ".") return;
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
+
   // Keyboard shortcut: 'n' next query, 'p' previous query
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -473,8 +484,10 @@ export function GradingView(props: Props) {
                 ["p", "Previous query"],
                 ["Tab", "Next agent tab"],
                 ["Shift+Tab", "Previous agent tab"],
+                ["Shift+Click", "Split compare view"],
                 ["t", "Toggle tool calls"],
                 ["m", "Toggle grade bar"],
+                [".", "Scroll to top"],
                 ["?", "Show shortcuts"],
                 ["Esc", "Close modal"],
               ].map(([key, desc]) => (
@@ -571,6 +584,13 @@ export function FloatingGradeBar({
                 />
               </div>
               <button
+                onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+                title="Scroll to top"
+                className="p-1 rounded text-muted-light hover:text-foreground hover:bg-[var(--surface-hover)] transition-colors"
+              >
+                <ArrowUp size={12} />
+              </button>
+              <button
                 onClick={onSync}
                 title="Refresh"
                 className={cn(
@@ -622,6 +642,13 @@ export function FloatingGradeBar({
                 <div className="flex items-center gap-2 text-xs text-muted shrink-0">
                   <span className="font-semibold">{graded}/{total}</span>
                   <span className="text-muted-light">{pct}%</span>
+                  <button
+                    onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+                    title="Scroll to top"
+                    className="p-1 rounded text-muted-light hover:text-foreground hover:bg-[var(--surface-hover)] transition-colors"
+                  >
+                    <ArrowUp size={12} />
+                  </button>
                   <button
                     onClick={onSync}
                     title="Refresh"
