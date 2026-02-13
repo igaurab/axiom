@@ -203,16 +203,24 @@ async def compute_compare_analytics(
         except ValueError:
             pass
 
-    # Consistency across runs — per query
+    # Consistency + per-query grades across runs
     # Load all results keyed by query_id
     all_grades_by_query: dict[int, list[str]] = {}
+    # {query_id: {run_id: grade}}
+    grade_map: dict[int, dict[int, str]] = {}
+    # {query_id: {run_id: {agent_response, error}}}
+    response_map: dict[int, dict[int, dict[str, str | None]]] = {}
+    # {query_id: {run_id: result_id}}
+    result_id_map: dict[int, dict[int, int]] = {}
+    query_meta: dict[int, dict] = {}
+
     for rid in run_ids:
         results = (
             (
                 await db.execute(
                     select(Result)
                     .where(Result.run_id == rid)
-                    .options(selectinload(Result.grade))
+                    .options(selectinload(Result.grade), selectinload(Result.query))
                 )
             )
             .scalars()
@@ -221,6 +229,21 @@ async def compute_compare_analytics(
         for r in results:
             if r.grade:
                 all_grades_by_query.setdefault(r.query_id, []).append(r.grade.grade)
+                grade_map.setdefault(r.query_id, {})[rid] = r.grade.grade
+            response_map.setdefault(r.query_id, {})[rid] = {
+                "agent_response": r.agent_response,
+                "error": r.error,
+            }
+            result_id_map.setdefault(r.query_id, {})[rid] = r.id
+            if r.query and r.query_id not in query_meta:
+                query_meta[r.query_id] = {
+                    "query_id": r.query_id,
+                    "ordinal": r.query.ordinal,
+                    "query_text": r.query.query_text,
+                    "expected_answer": r.query.expected_answer,
+                    "comments": r.query.comments,
+                    "tag": r.query.tag,
+                }
 
     consistency = {
         "all_correct": 0,
@@ -241,4 +264,19 @@ async def compute_compare_analytics(
         else:
             consistency["inconsistent"] += 1
 
-    return CompareAnalyticsOut(runs=runs_analytics, consistency=consistency)
+    # Build query_grades list sorted by ordinal
+    query_grades = []
+    for qid, meta in query_meta.items():
+        query_grades.append({
+            **meta,
+            "grades": grade_map.get(qid, {}),
+            "responses": response_map.get(qid, {}),
+            "result_ids": result_id_map.get(qid, {}),
+        })
+    query_grades.sort(key=lambda x: x["ordinal"])
+
+    return CompareAnalyticsOut(
+        runs=runs_analytics,
+        consistency=consistency,
+        query_grades=query_grades,
+    )

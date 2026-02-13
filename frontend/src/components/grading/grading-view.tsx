@@ -12,7 +12,7 @@ import { GradingCard } from "./grading-card";
 import { CompareCard } from "./compare-card";
 import { QueryNav, buildQueryNavItems, buildSingleRunNavItems } from "./query-nav";
 import { ToolModal } from "@/components/tool-calls/tool-modal";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface GradeBarData {
@@ -76,7 +76,13 @@ export function GradingView(props: Props) {
   const runIds = isCompare ? props.runIds : [props.runId];
   const queryClient = useQueryClient();
 
-  const [toolModal, setToolModal] = useState<ToolModalState | null>(null);
+  const [toolModal, _setToolModal] = useState<ToolModalState | null>(null);
+  const toolModalRef = useRef<ToolModalState | null>(null);
+  const setToolModal = useCallback((v: ToolModalState | null) => {
+    toolModalRef.current = v;
+    _setToolModal(v);
+  }, []);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const cardRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const [lastFullyGradedQuery, setLastFullyGradedQuery] = useState<number | null>(null);
   const [activeQueryId, setActiveQueryId] = useState<number | null>(null);
@@ -250,7 +256,7 @@ export function GradingView(props: Props) {
           setActiveQueryId(visible[0]);
         }
       },
-      { rootMargin: "-80px 0px -50% 0px", threshold: 0 }
+      { rootMargin: "-80px 0px -70% 0px", threshold: 0 }
     );
 
     Object.entries(cardRefs.current).forEach(([qidStr, el]) => {
@@ -262,6 +268,67 @@ export function GradingView(props: Props) {
 
     return () => observer.disconnect();
   }, [queryIds]);
+
+  // Keyboard shortcut: 't' opens tool calls for the active query
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      if (e.key !== "t" && e.key !== "T") return;
+
+      // Toggle: close if already open
+      if (toolModalRef.current) {
+        setToolModal(null);
+        return;
+      }
+
+      if (activeQueryId == null) return;
+
+      if (isCompare) {
+        const qResults = allResults[activeQueryId];
+        if (!qResults) return;
+        for (const rid of runIds) {
+          const r = qResults[rid];
+          if (r?.tool_calls?.length) {
+            const run = runs.find((ru) => ru.id === rid);
+            setToolModal({
+              toolCalls: r.tool_calls,
+              idx: 0,
+              queryLabel: `Q${r.query?.ordinal || r.query_id}`,
+              runLabel: run?.label || "",
+            });
+            return;
+          }
+        }
+      } else {
+        const r = singleSortedResults.find((res) => res.query_id === activeQueryId);
+        if (r?.tool_calls?.length) {
+          setToolModal({
+            toolCalls: r.tool_calls,
+            idx: 0,
+            queryLabel: `Q${r.query?.ordinal || r.query_id}`,
+            runLabel: runs[0]?.label || "",
+          });
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [activeQueryId, isCompare, allResults, runIds, runs, singleSortedResults]);
+
+  // Keyboard shortcut: '?' shows shortcuts help
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      if (e.key === "?") {
+        setShowShortcuts((prev) => !prev);
+      }
+      if (e.key === "Escape" && showShortcuts) {
+        setShowShortcuts(false);
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [showShortcuts]);
 
   const queryNavItems = useMemo(() => {
     if (isCompare) return buildQueryNavItems(compareQueryIds, allResults, runIds);
@@ -284,6 +351,22 @@ export function GradingView(props: Props) {
       isNavigating.current = false;
     }, 800);
   }, []);
+
+  // Keyboard shortcut: 'n' next query, 'p' previous query
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      if (e.key !== "n" && e.key !== "p") return;
+      if (activeQueryId == null || queryIds.length === 0) return;
+      const idx = queryIds.indexOf(activeQueryId);
+      const next = e.key === "n" ? idx + 1 : idx - 1;
+      if (next >= 0 && next < queryIds.length) {
+        handleNavNavigate(queryIds[next]);
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [activeQueryId, queryIds, handleNavNavigate]);
 
   // Grade summary
   const gradeGroups = useMemo(() => {
@@ -350,6 +433,7 @@ export function GradingView(props: Props) {
                 resultsByRun={allResults[qid]}
                 onGrade={handleGrade}
                 onOpenToolModal={(resultId, idx, runLabel) => handleOpenToolModal(resultId, idx, runLabel)}
+                isActive={activeQueryId === qid}
               />
             </div>
           );
@@ -375,6 +459,34 @@ export function GradingView(props: Props) {
           onClose={() => setToolModal(null)}
         />
       )}
+
+      {showShortcuts && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowShortcuts(false)}>
+          <div className="bg-card rounded-2xl border border-border shadow-2xl p-6 w-80" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold text-foreground">Keyboard Shortcuts</h3>
+              <button onClick={() => setShowShortcuts(false)} className="text-muted hover:text-foreground text-lg leading-none">&times;</button>
+            </div>
+            <div className="space-y-2 text-sm">
+              {[
+                ["n", "Next query"],
+                ["p", "Previous query"],
+                ["Tab", "Next agent tab"],
+                ["Shift+Tab", "Previous agent tab"],
+                ["t", "Toggle tool calls"],
+                ["m", "Toggle grade bar"],
+                ["?", "Show shortcuts"],
+                ["Esc", "Close modal"],
+              ].map(([key, desc]) => (
+                <div key={key} className="flex items-center justify-between py-1">
+                  <span className="text-muted">{desc}</span>
+                  <kbd className="px-2 py-0.5 rounded bg-[var(--surface)] border border-border text-xs font-mono font-semibold text-foreground">{key}</kbd>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -396,6 +508,8 @@ export function FloatingGradeBar({
 }) {
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(false);
+  const [minimized, setMinimized] = useState(false);
+  const userToggled = useRef(false);
 
   useEffect(() => {
     const sentinel = sentinelRef.current;
@@ -406,6 +520,28 @@ export function FloatingGradeBar({
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
+  }, []);
+
+  // Auto-minimize when pinned (scrolling) with >3 agents
+  useEffect(() => {
+    if (userToggled.current) return;
+    if (pinned && groups.length > 3) {
+      setMinimized(true);
+    } else if (!pinned) {
+      setMinimized(false);
+    }
+  }, [pinned, groups.length]);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      if (e.key === "m" || e.key === "M") {
+        userToggled.current = true;
+        setMinimized((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
   return (
@@ -421,38 +557,19 @@ export function FloatingGradeBar({
           "glass-opaque rounded-2xl overflow-hidden inline-flex flex-col transition-all duration-300",
           pinned ? "shadow-xl" : "shadow-md"
         )}>
-          {/* Content */}
-          <div className="px-4 py-2 flex items-center gap-3">
-            {/* Grade groups */}
-            <div className="flex items-center gap-3 flex-wrap flex-1 min-w-0">
-              {groups.map((g, i) => {
-                const colors = floatingGroupColors[i % floatingGroupColors.length];
-                return (
-                  <div
-                    key={i}
-                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
-                    style={{ background: colors.bg }}
-                  >
-                    <span
-                      className="font-bold text-xs truncate max-w-[100px]"
-                      style={{ color: colors.label }}
-                      title={g.label}
-                    >
-                      {g.label}
-                    </span>
-                    <span className="inline-flex items-center rounded-xl px-1.5 py-px text-xs font-semibold bg-grade-correct-bg text-grade-correct-text">{g.correct}</span>
-                    <span className="inline-flex items-center rounded-xl px-1.5 py-px text-xs font-semibold bg-grade-partial-bg text-grade-partial-text">{g.partial}</span>
-                    <span className="inline-flex items-center rounded-xl px-1.5 py-px text-xs font-semibold bg-grade-wrong-bg text-grade-wrong-text">{g.wrong}</span>
-                    <span className="inline-flex items-center rounded-xl px-1.5 py-px text-xs font-semibold bg-grade-pending-bg text-grade-pending-text">{g.pending}</span>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Right: count + sync */}
-            <div className="flex items-center gap-2 text-xs text-muted shrink-0">
-              <span className="font-semibold">{graded}/{total}</span>
-              <span className="text-muted-light">{pct}%</span>
+          {minimized ? (
+            /* Minimized: just progress bar + count + expand button */
+            <div className="px-4 py-1.5 flex items-center gap-3">
+              <div className="flex items-center gap-2 text-xs text-muted">
+                <span className="font-semibold">{graded}/{total}</span>
+                <span className="text-muted-light">{pct}%</span>
+              </div>
+              <div className="w-32 h-1.5 bg-border/40 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-brand rounded-full transition-all duration-500"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
               <button
                 onClick={onSync}
                 title="Refresh"
@@ -463,16 +580,77 @@ export function FloatingGradeBar({
               >
                 <RefreshCw size={12} />
               </button>
+              <button
+                onClick={() => setMinimized(false)}
+                title="Expand grade bar"
+                className="p-1 rounded text-muted-light hover:text-foreground hover:bg-[var(--surface-hover)] transition-colors"
+              >
+                <ChevronUp size={14} />
+              </button>
             </div>
-          </div>
+          ) : (
+            /* Expanded: full content */
+            <>
+              <div className="px-4 py-2 flex items-center gap-3">
+                {/* Grade groups */}
+                <div className="flex items-center gap-3 flex-wrap flex-1 min-w-0">
+                  {groups.map((g, i) => {
+                    const colors = floatingGroupColors[i % floatingGroupColors.length];
+                    return (
+                      <div
+                        key={i}
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
+                        style={{ background: colors.bg }}
+                      >
+                        <span
+                          className="font-bold text-xs truncate max-w-[100px]"
+                          style={{ color: colors.label }}
+                          title={g.label}
+                        >
+                          {g.label}
+                        </span>
+                        <span className="inline-flex items-center rounded-xl px-1.5 py-px text-xs font-semibold bg-grade-correct-bg text-grade-correct-text">{g.correct}</span>
+                        <span className="inline-flex items-center rounded-xl px-1.5 py-px text-xs font-semibold bg-grade-partial-bg text-grade-partial-text">{g.partial}</span>
+                        <span className="inline-flex items-center rounded-xl px-1.5 py-px text-xs font-semibold bg-grade-wrong-bg text-grade-wrong-text">{g.wrong}</span>
+                        <span className="inline-flex items-center rounded-xl px-1.5 py-px text-xs font-semibold bg-grade-pending-bg text-grade-pending-text">{g.pending}</span>
+                      </div>
+                    );
+                  })}
+                </div>
 
-          {/* Progress bar along the bottom edge */}
-          <div className="h-[3px] bg-border/40">
-            <div
-              className="h-full bg-brand rounded-r-full transition-all duration-500"
-              style={{ width: `${pct}%` }}
-            />
-          </div>
+                {/* Right: count + sync + minimize */}
+                <div className="flex items-center gap-2 text-xs text-muted shrink-0">
+                  <span className="font-semibold">{graded}/{total}</span>
+                  <span className="text-muted-light">{pct}%</span>
+                  <button
+                    onClick={onSync}
+                    title="Refresh"
+                    className={cn(
+                      "p-1 rounded text-muted-light hover:text-primary hover:bg-primary/10 transition-colors",
+                      isFetching && "animate-spin-slow"
+                    )}
+                  >
+                    <RefreshCw size={12} />
+                  </button>
+                  <button
+                    onClick={() => setMinimized(true)}
+                    title="Minimize grade bar"
+                    className="p-1 rounded text-muted-light hover:text-foreground hover:bg-[var(--surface-hover)] transition-colors"
+                  >
+                    <ChevronDown size={14} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Progress bar along the bottom edge */}
+              <div className="h-[3px] bg-border/40">
+                <div
+                  className="h-full bg-brand rounded-r-full transition-all duration-500"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            </>
+          )}
         </div>
       </div>
     </>

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AreaChart } from "lucide-react";
 import { analyticsApi } from "@/lib/api/analytics";
-import type { RunAnalyticsOut, CompareAnalyticsOut } from "@/lib/types";
+import type { RunAnalyticsOut } from "@/lib/types";
 import { AccuracyChartModal } from "./accuracy-chart-modal";
 
 interface Props {
@@ -78,48 +78,35 @@ export function CompareDashboard({ runIds }: Props) {
         </table>
       </div>
 
-      {/* Consistency */}
-      {data.consistency && (
-        <div className="bg-card rounded-xl p-6 px-8 mb-6 shadow-sm">
-          <h2 className="text-lg font-semibold mb-4 pb-2 border-b-2 border-border text-brand-dark">Consistency</h2>
-          <div className="flex gap-4 mb-2 text-sm">
-            <div className="flex items-center gap-1.5"><div className="w-3.5 h-3.5 rounded bg-green-500" /> All correct: {data.consistency.all_correct}</div>
-            <div className="flex items-center gap-1.5"><div className="w-3.5 h-3.5 rounded bg-yellow-400" /> All partial: {data.consistency.all_partial}</div>
-            <div className="flex items-center gap-1.5"><div className="w-3.5 h-3.5 rounded bg-orange-500" /> Inconsistent: {data.consistency.inconsistent}</div>
-            <div className="flex items-center gap-1.5"><div className="w-3.5 h-3.5 rounded bg-red-500" /> All wrong: {data.consistency.all_wrong}</div>
-          </div>
-        </div>
-      )}
-
-      {/* Performance comparison */}
+      {/* Performance comparison (transposed: metrics as columns, agents as rows) */}
       <div className="bg-card rounded-xl p-6 px-8 mb-6 shadow-sm">
         <h2 className="text-lg font-semibold mb-4 pb-2 border-b-2 border-border text-brand-dark">Performance Stats</h2>
         <table className="w-full text-sm">
           <thead>
             <tr>
-              <th className="text-left p-2 bg-[var(--surface)] font-semibold">Metric</th>
-              {runs.map((r) => (
-                <th key={r.run_id} className="text-right p-2 bg-[var(--surface)] font-semibold" colSpan={2}>
-                  {r.label}
+              <th className="text-left p-2 bg-[var(--surface)] font-semibold">Agent</th>
+              {([["time", "Exec Time (s)"], ["tokens", "Total Tokens"], ["tools", "Tool Calls"]] as const).map(([key, label]) => (
+                <th key={key} className="text-right p-2 bg-[var(--surface)] font-semibold" colSpan={2}>
+                  {label}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {([["time", "Exec Time (s)"], ["tokens", "Total Tokens"], ["tools", "Tool Calls"]] as const).map(([key, label]) => (
-              <tr key={key} className="border-b border-border">
-                <td className="p-2 font-semibold">{label}</td>
-                {runs.map((r) => {
+            {runs.map((r) => (
+              <tr key={r.run_id} className="border-b border-border">
+                <td className="p-2 font-semibold">{r.label}</td>
+                {(["time", "tokens", "tools"] as const).map((key) => {
                   const st = r.performance[key];
                   if (st && st.n > 0) {
                     return [
-                      <td key={`${r.run_id}-mean`} className="p-2 text-right tabular-nums">{st.mean.toFixed(1)}&plusmn;{st.std.toFixed(1)}</td>,
-                      <td key={`${r.run_id}-med`} className="p-2 text-right tabular-nums">{st.median.toFixed(1)}</td>,
+                      <td key={`${key}-mean`} className="p-2 text-right tabular-nums">{st.mean.toFixed(1)}&plusmn;{st.std.toFixed(1)}</td>,
+                      <td key={`${key}-med`} className="p-2 text-right tabular-nums">{st.median.toFixed(1)}</td>,
                     ];
                   }
                   return [
-                    <td key={`${r.run_id}-mean`} className="p-2 text-right">N/A</td>,
-                    <td key={`${r.run_id}-med`} className="p-2 text-right">N/A</td>,
+                    <td key={`${key}-mean`} className="p-2 text-right">N/A</td>,
+                    <td key={`${key}-med`} className="p-2 text-right">N/A</td>,
                   ];
                 })}
               </tr>

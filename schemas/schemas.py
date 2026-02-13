@@ -270,6 +270,7 @@ class RunAnalyticsOut(BaseModel):
 class CompareAnalyticsOut(BaseModel):
     runs: list[RunAnalyticsOut]
     consistency: dict[str, int] = {}
+    query_grades: list[dict[str, Any]] = []
 
 
 # --- Comparison ---

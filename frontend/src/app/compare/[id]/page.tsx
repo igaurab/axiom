@@ -4,15 +4,17 @@ import { useState } from "react";
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { comparisonsApi } from "@/lib/api/comparisons";
+import { analyticsApi } from "@/lib/api/analytics";
 import { exportApi } from "@/lib/api/export";
 import { PageHeader } from "@/components/layout/page-header";
 import { GradingView } from "@/components/grading/grading-view";
 import { CompareDashboard } from "@/components/dashboard/compare-dashboard";
+import { QueryComparisonMatrix } from "@/components/dashboard/query-comparison-matrix";
 import { ConfigView } from "@/components/runs/config-view";
 import { cn } from "@/lib/utils";
 import { GitCompareArrows } from "lucide-react";
 
-type Mode = "grading" | "dashboard" | "config";
+type Mode = "grading" | "dashboard" | "compare" | "config";
 
 export default function CompareDetailPage() {
   const params = useParams();
@@ -23,6 +25,13 @@ export default function CompareDetailPage() {
     queryKey: ["comparison", comparisonId],
     queryFn: () => comparisonsApi.get(comparisonId),
     enabled: !isNaN(comparisonId),
+  });
+
+  const runIds = comparison?.run_ids || [];
+  const { data: compareAnalytics, isLoading: analyticsLoading } = useQuery({
+    queryKey: ["compare-analytics", runIds.join(",")],
+    queryFn: () => analyticsApi.compare(runIds),
+    enabled: mode === "compare" && runIds.length > 1,
   });
 
   if (isLoading) {
@@ -49,8 +58,6 @@ export default function CompareDetailPage() {
     );
   }
 
-  const runIds = comparison.run_ids;
-
   return (
     <>
       <PageHeader title={comparison.name || `Comparison #${comparison.id}`} subtitle={
@@ -58,7 +65,7 @@ export default function CompareDetailPage() {
       } />
 
       <div className="flex gap-1 mb-4 bg-[var(--surface-hover)] border border-border rounded-lg p-1 w-fit">
-        {(["grading", "dashboard", "config"] as Mode[]).map((m) => (
+        {(["grading", "dashboard", "compare", "config"] as Mode[]).map((m) => (
           <button key={m} className={cn("px-4 py-1.5 rounded-md text-sm font-semibold transition-colors", mode === m ? "bg-primary text-primary-foreground shadow-sm" : "text-muted hover:text-foreground hover:bg-[var(--surface)]")} onClick={() => setMode(m)}>
             {m.charAt(0).toUpperCase() + m.slice(1)}
           </button>
@@ -74,6 +81,16 @@ export default function CompareDetailPage() {
       {mode === "dashboard" && (
         <>
           <CompareDashboard runIds={runIds} />
+          <ExportBar runIds={runIds} />
+        </>
+      )}
+      {mode === "compare" && (
+        <>
+          {analyticsLoading ? (
+            <div className="text-center py-8 text-muted">Loading comparison matrix...</div>
+          ) : (
+            <QueryComparisonMatrix runs={compareAnalytics?.runs || []} queryGrades={compareAnalytics?.query_grades || []} />
+          )}
           <ExportBar runIds={runIds} />
         </>
       )}

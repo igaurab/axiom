@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import type { ResultOut, RunDetailOut, GradeValue, QueryOut } from "@/lib/types";
 import { MarkdownRenderer } from "@/components/markdown/markdown-renderer";
 import { GradeButton } from "./grade-button";
@@ -16,6 +16,7 @@ interface Props {
   resultsByRun: Record<number, ResultOut>;
   onGrade: (resultId: number, grade: GradeValue, queryId: number, tabIdx: number) => void;
   onOpenToolModal: (resultId: number, idx: number, runLabel: string) => void;
+  isActive?: boolean;
 }
 
 const borderColors: Record<string, string> = {
@@ -31,8 +32,26 @@ const dotColors: Record<string, string> = {
   not_graded: "bg-muted-light",
 };
 
-export function CompareCard({ queryId, query, runs, resultsByRun, onGrade, onOpenToolModal }: Props) {
+export function CompareCard({ queryId, query, runs, resultsByRun, onGrade, onOpenToolModal, isActive }: Props) {
   const [activeTab, setActiveTab] = useState(0);
+  const [tabsMinimized, setTabsMinimized] = useState(false);
+
+  // Tab / Shift+Tab to cycle agent tabs when this card is active
+  useEffect(() => {
+    if (!isActive || runs.length <= 1) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      if (e.key !== "Tab") return;
+      e.preventDefault();
+      setActiveTab((prev) =>
+        e.shiftKey
+          ? (prev - 1 + runs.length) % runs.length
+          : (prev + 1) % runs.length
+      );
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [isActive, runs.length]);
 
   const handleAutoAdvance = useCallback((tabIdx: number) => {
     if (tabIdx + 1 < runs.length) {
@@ -71,27 +90,66 @@ export function CompareCard({ queryId, query, runs, resultsByRun, onGrade, onOpe
       </div>
 
       {/* Tab bar */}
-      <div className="flex bg-[var(--surface-hover)] border-b-2 border-border rounded-t-lg overflow-x-auto">
-        {runs.map((run, idx) => {
-          const r = resultsByRun[run.id];
-          const grade = r?.grade?.grade || "not_graded";
-          return (
-            <button
-              key={run.id}
-              className={cn(
-                "px-4 py-2.5 font-semibold text-sm text-muted border-b-[3px] border-transparent -mb-[2px] whitespace-nowrap transition-colors",
-                idx === activeTab
-                  ? "text-foreground bg-card border-b-brand"
-                  : "hover:bg-[var(--surface)] hover:text-foreground"
-              )}
-              onClick={() => setActiveTab(idx)}
-            >
-              {run.label}
-              <span className={cn("w-2.5 h-2.5 rounded-full inline-block ml-1.5", dotColors[grade])} />
-            </button>
-          );
-        })}
-      </div>
+      {tabsMinimized ? (
+        <div className="flex items-center gap-1.5 bg-[var(--surface-hover)] border-b-2 border-border rounded-t-lg px-3 py-2">
+          {runs.map((run, idx) => {
+            const r = resultsByRun[run.id];
+            const grade = r?.grade?.grade || "not_graded";
+            return (
+              <button
+                key={run.id}
+                title={run.label}
+                className={cn(
+                  "w-3 h-3 rounded-full transition-all",
+                  dotColors[grade],
+                  idx === activeTab && "ring-2 ring-brand ring-offset-1 ring-offset-[var(--surface-hover)]"
+                )}
+                onClick={() => setActiveTab(idx)}
+              />
+            );
+          })}
+          <button
+            className="ml-auto text-muted hover:text-foreground transition-colors p-0.5"
+            onClick={() => setTabsMinimized(false)}
+            title="Expand agent tabs"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M4 6l4 4 4-4" />
+            </svg>
+          </button>
+        </div>
+      ) : (
+        <div className="flex bg-[var(--surface-hover)] border-b-2 border-border rounded-t-lg overflow-x-auto">
+          {runs.map((run, idx) => {
+            const r = resultsByRun[run.id];
+            const grade = r?.grade?.grade || "not_graded";
+            return (
+              <button
+                key={run.id}
+                className={cn(
+                  "px-4 py-2.5 font-semibold text-sm text-muted border-b-[3px] border-transparent -mb-[2px] whitespace-nowrap transition-colors",
+                  idx === activeTab
+                    ? "text-foreground bg-card border-b-brand"
+                    : "hover:bg-[var(--surface)] hover:text-foreground"
+                )}
+                onClick={() => setActiveTab(idx)}
+              >
+                {run.label}
+                <span className={cn("w-2.5 h-2.5 rounded-full inline-block ml-1.5", dotColors[grade])} />
+              </button>
+            );
+          })}
+          <button
+            className="ml-auto px-2 text-muted hover:text-foreground transition-colors flex-shrink-0"
+            onClick={() => setTabsMinimized(true)}
+            title="Minimize agent tabs"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M4 10l4-4 4 4" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       {/* Tab panels */}
       {runs.map((run, idx) => {
