@@ -12,7 +12,6 @@ import { resultsApi } from "@/lib/api/results";
 import { runsApi } from "@/lib/api/runs";
 import { gradesApi } from "@/lib/api/grades";
 import { computeGradeGroups, computeCompareGradeGroups } from "./grade-summary";
-import type { GradeGroup } from "./grade-summary";
 import { GradingCard } from "./grading-card";
 import { CompareCard } from "./compare-card";
 import { buildQueryNavItems, buildSingleRunNavItems } from "./query-nav";
@@ -79,7 +78,6 @@ export function GradingView(props: Props) {
     toolModalRef.current = v;
     _setToolModal(v);
   }, []);
-  const cardRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const [lastFullyGradedQuery, setLastFullyGradedQuery] = useState<
     number | null
   >(null);
@@ -87,9 +85,6 @@ export function GradingView(props: Props) {
   const [retryingResultIds, setRetryingResultIds] = useState<Set<number>>(
     new Set(),
   );
-  const visibleQueries = useRef<Set<number>>(new Set());
-  const isNavigating = useRef(false);
-  const navTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // Fetch all results and runs — data lives in React Query cache
   const qKey = ["grading", runIds.join(",")];
@@ -293,7 +288,17 @@ export function GradingView(props: Props) {
   // Unified queryIds for both modes
   const queryIds = isCompare ? compareQueryIds : singleQueryIds;
 
-  // Auto-scroll to next ungraded query card
+  // Initialize activeQueryId to the first query
+  useEffect(() => {
+    if (
+      queryIds.length > 0 &&
+      (activeQueryId == null || !queryIds.includes(activeQueryId))
+    ) {
+      setActiveQueryId(queryIds[0]);
+    }
+  }, [queryIds, activeQueryId]);
+
+  // Auto-advance to next ungraded query after grading
   useEffect(() => {
     if (lastFullyGradedQuery == null) return;
     setLastFullyGradedQuery(null);
@@ -313,20 +318,19 @@ export function GradingView(props: Props) {
           (rid) => !nextResults[rid]?.grade?.grade,
         );
         if (hasUngraded) {
-          const el = cardRefs.current[nextQid];
-          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+          setActiveQueryId(nextQid);
+          window.scrollTo({ top: 0 });
           return;
         }
       }
     } else {
-      // Single-run: scroll to next ungraded
       const idx = singleSortedResults.findIndex(
         (r) => r.query_id === lastFullyGradedQuery,
       );
       for (let i = idx + 1; i < singleSortedResults.length; i++) {
         if (!singleSortedResults[i].grade?.grade) {
-          const el = cardRefs.current[singleSortedResults[i].query_id];
-          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+          setActiveQueryId(singleSortedResults[i].query_id);
+          window.scrollTo({ top: 0 });
           return;
         }
       }
@@ -339,43 +343,6 @@ export function GradingView(props: Props) {
     compareQueryIds,
     singleSortedResults,
   ]);
-
-  // IntersectionObserver to track visible query card
-  useEffect(() => {
-    if (queryIds.length === 0) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (isNavigating.current) return; // skip during click-navigation
-        entries.forEach((entry) => {
-          const qid = Number(entry.target.getAttribute("data-query-id"));
-          if (isNaN(qid)) return;
-          if (entry.isIntersecting) {
-            visibleQueries.current.add(qid);
-          } else {
-            visibleQueries.current.delete(qid);
-          }
-        });
-        const visible = [...visibleQueries.current].filter((q) =>
-          queryIds.includes(q),
-        );
-        if (visible.length > 0) {
-          visible.sort((a, b) => queryIds.indexOf(a) - queryIds.indexOf(b));
-          setActiveQueryId(visible[0]);
-        }
-      },
-      { rootMargin: "-80px 0px -70% 0px", threshold: 0 },
-    );
-
-    Object.entries(cardRefs.current).forEach(([qidStr, el]) => {
-      if (el) {
-        el.setAttribute("data-query-id", qidStr);
-        observer.observe(el);
-      }
-    });
-
-    return () => observer.disconnect();
-  }, [queryIds]);
 
   // Keyboard shortcut: 't' opens tool calls for the active query
   useEffect(() => {
@@ -437,20 +404,8 @@ export function GradingView(props: Props) {
   }, [isCompare, compareQueryIds, allResults, runIds, singleSortedResults]);
 
   const handleNavNavigate = useCallback((queryId: number) => {
-    // Immediately jump the sidebar highlight — lock observer so intermediate cards don't flicker
     setActiveQueryId(queryId);
-    isNavigating.current = true;
-    clearTimeout(navTimer.current);
-
-    const el = cardRefs.current[queryId];
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-
-    // Unlock observer after scroll settles
-    navTimer.current = setTimeout(() => {
-      isNavigating.current = false;
-    }, 800);
+    window.scrollTo({ top: 0 });
   }, []);
 
   // Keyboard shortcut: '.' scroll to top
@@ -473,7 +428,6 @@ export function GradingView(props: Props) {
   useEffect(() => {
     const gradeMap: Record<string, GradeValue> = {
       y: "correct",
-      c: "correct",
       p: "partial",
       w: "wrong",
       n: "wrong",
@@ -599,60 +553,54 @@ export function GradingView(props: Props) {
       />
 
       {isCompare
-        ? queryIds.map((qid) => {
+        ? (() => {
+            const qid = activeQueryId;
+            if (qid == null || !allResults[qid]) return null;
             const firstResult = Object.values(allResults[qid])[0];
             return (
-              <div
+              <CompareCard
                 key={qid}
-                ref={(el) => {
-                  cardRefs.current[qid] = el;
-                }}
-                className="scroll-mt-20"
-              >
-                <CompareCard
-                  queryId={qid}
-                  query={
-                    firstResult?.query || {
-                      id: qid,
-                      suite_id: 0,
-                      ordinal: qid,
-                      tag: null,
-                      query_text: "",
-                      expected_answer: "",
-                      comments: null,
-                    }
+                queryId={qid}
+                query={
+                  firstResult?.query || {
+                    id: qid,
+                    suite_id: 0,
+                    ordinal: qid,
+                    tag: null,
+                    query_text: "",
+                    expected_answer: "",
+                    comments: null,
                   }
-                  runs={runs}
-                  resultsByRun={allResults[qid]}
-                  onGrade={handleGrade}
-                  onOpenToolModal={(resultId, idx, runLabel) =>
-                    handleOpenToolModal(resultId, idx, runLabel)
-                  }
-                  versionsByResultId={versionsByResultId}
-                  onRetry={handleRetry}
-                  onAcceptVersion={(resultId, versionId) =>
-                    acceptVersionMutation.mutate({ resultId, versionId })
-                  }
-                  onIgnoreVersion={(resultId, versionId) =>
-                    ignoreVersionMutation.mutate({ resultId, versionId })
-                  }
-                  isActive={activeQueryId === qid}
-                  isRetrying={Object.values(allResults[qid] || {}).some((res) =>
-                    retryingResultIds.has(res.id),
-                  )}
-                />
-              </div>
+                }
+                runs={runs}
+                resultsByRun={allResults[qid]}
+                onGrade={handleGrade}
+                onOpenToolModal={(resultId, idx, runLabel) =>
+                  handleOpenToolModal(resultId, idx, runLabel)
+                }
+                versionsByResultId={versionsByResultId}
+                onRetry={handleRetry}
+                onAcceptVersion={(resultId, versionId) =>
+                  acceptVersionMutation.mutate({ resultId, versionId })
+                }
+                onIgnoreVersion={(resultId, versionId) =>
+                  ignoreVersionMutation.mutate({ resultId, versionId })
+                }
+                isActive
+                isRetrying={Object.values(allResults[qid] || {}).some((res) =>
+                  retryingResultIds.has(res.id),
+                )}
+              />
             );
-          })
-        : singleSortedResults.map((r) => (
-            <div
-              key={r.id}
-              ref={(el) => {
-                cardRefs.current[r.query_id] = el;
-              }}
-              className="scroll-mt-20"
-            >
+          })()
+        : (() => {
+            const r = singleSortedResults.find(
+              (res) => res.query_id === activeQueryId,
+            );
+            if (!r) return null;
+            return (
               <GradingCard
+                key={r.id}
                 result={r}
                 onGrade={handleGrade}
                 onOpenToolModal={handleOpenToolModal}
@@ -666,8 +614,8 @@ export function GradingView(props: Props) {
                 }
                 isRetrying={retryingResultIds.has(r.id)}
               />
-            </div>
-          ))}
+            );
+          })()}
 
       {toolModal && (
         <ToolModal

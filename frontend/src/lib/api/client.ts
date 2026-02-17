@@ -97,6 +97,10 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   return res.json();
 }
 
+export async function apiFetchResponse(path: string, init?: RequestInit): Promise<Response> {
+  return fetchWithSessionRecovery(path, init, true);
+}
+
 export function apiUrl(path: string): string {
   return `${API_BASE}${path}`;
 }

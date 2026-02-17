@@ -8,14 +8,13 @@ import { resultsApi } from "@/lib/api/results";
 import { gradesApi } from "@/lib/api/grades";
 import { useSSE } from "@/hooks/use-sse";
 import { apiUrl } from "@/lib/api/client";
-import { exportApi } from "@/lib/api/export";
 import { PageHeader } from "@/components/layout/page-header";
 import { GradingView } from "@/components/grading/grading-view";
 import { DashboardView } from "@/components/dashboard/dashboard-view";
 import { CompareDashboard } from "@/components/dashboard/compare-dashboard";
 import { ConfigView } from "@/components/runs/config-view";
 import { CsvGradeImportModal } from "@/components/grading/csv-grade-import-modal";
-import { Upload } from "lucide-react";
+
 import { cn, formatElapsed } from "@/lib/utils";
 import type { RunDetailOut, SSEProgressData } from "@/lib/types";
 
@@ -263,7 +262,6 @@ export default function RunDetailPage() {
   if (isLoading || !run)
     return <div className="text-center py-8 text-muted">Loading...</div>;
 
-  const exportRunIds = allRunIds;
   const rerunCheckedCount = rerunQueryIds.filter((q) => q.checked).length;
 
   return (
@@ -469,29 +467,18 @@ export default function RunDetailPage() {
             ))}
           </div>
 
-          {mode === "grading" && (
-            <>
-              {isGroup ? (
-                <GradingView runIds={allRunIds} compare />
-              ) : (
-                <GradingView runId={runId} />
-              )}
-              <ExportBar
-                runIds={exportRunIds}
-                onImportGrades={() => setGradeImportModal(true)}
-              />
-            </>
-          )}
-          {mode === "dashboard" && (
-            <>
-              {isGroup ? (
-                <CompareDashboard runIds={allRunIds} />
-              ) : (
-                <DashboardView runId={runId} />
-              )}
-              <ExportBar runIds={exportRunIds} />
-            </>
-          )}
+          {mode === "grading" &&
+            (isGroup ? (
+              <GradingView runIds={allRunIds} compare />
+            ) : (
+              <GradingView runId={runId} />
+            ))}
+          {mode === "dashboard" &&
+            (isGroup ? (
+              <CompareDashboard runIds={allRunIds} />
+            ) : (
+              <DashboardView runId={runId} />
+            ))}
           {mode === "config" && <ConfigView runIds={allRunIds} />}
         </>
       )}
@@ -675,36 +662,5 @@ export default function RunDetailPage() {
         </div>
       )}
     </>
-  );
-}
-
-function ExportBar({
-  runIds,
-  onImportGrades,
-}: {
-  runIds: number[];
-  onImportGrades?: () => void;
-}) {
-  return (
-    <div className="flex gap-2 mt-6 pt-4 border-t border-border">
-      {onImportGrades && (
-        <button onClick={onImportGrades} className="btn-subtle">
-          <Upload size={14} /> Import Grades
-        </button>
-      )}
-      <a
-        href={exportApi.htmlUrl(runIds)}
-        target="_blank"
-        className="btn-subtle no-underline"
-      >
-        Share as HTML
-      </a>
-      <a href={exportApi.csvUrl(runIds)} className="btn-subtle no-underline">
-        Export CSV
-      </a>
-      <a href={exportApi.jsonUrl(runIds)} className="btn-subtle no-underline">
-        Export JSON
-      </a>
-    </div>
   );
 }

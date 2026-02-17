@@ -8,7 +8,6 @@ import { comparisonsApi } from "@/lib/api/comparisons";
 import { analyticsApi } from "@/lib/api/analytics";
 import { resultsApi } from "@/lib/api/results";
 import { runsApi } from "@/lib/api/runs";
-import { exportApi } from "@/lib/api/export";
 import { PageHeader } from "@/components/layout/page-header";
 import { GradingView } from "@/components/grading/grading-view";
 import { CompareDashboard } from "@/components/dashboard/compare-dashboard";
@@ -100,18 +99,8 @@ export default function CompareDetailPage() {
         ))}
       </div>
 
-      {mode === "grading" && (
-        <>
-          <GradingView runIds={runIds} compare />
-          <ExportBar runIds={runIds} />
-        </>
-      )}
-      {mode === "dashboard" && (
-        <>
-          <CompareDashboard runIds={runIds} />
-          <ExportBar runIds={runIds} />
-        </>
-      )}
+      {mode === "grading" && <GradingView runIds={runIds} compare />}
+      {mode === "dashboard" && <CompareDashboard runIds={runIds} />}
       {mode === "compare" && (
         <>
           {analyticsLoading ? (
@@ -125,7 +114,6 @@ export default function CompareDetailPage() {
             />
           )}
           <TraceComparisonCard runIds={runIds} />
-          <ExportBar runIds={runIds} />
         </>
       )}
       {mode === "traces" && (
@@ -284,32 +272,6 @@ function TraceComparisonCard({ runIds }: { runIds: number[] }) {
         }}
         queryLabel={`Query #${allResults[activeQueryId] ? (Object.values(allResults[activeQueryId])[0]?.query?.ordinal ?? activeQueryId) : activeQueryId}`}
       />
-    </div>
-  );
-}
-
-function ExportBar({ runIds }: { runIds: number[] }) {
-  return (
-    <div className="flex gap-2 mt-6 pt-4 border-t border-border">
-      <a
-        href={exportApi.htmlUrl(runIds)}
-        target="_blank"
-        className="px-4 py-2 bg-card border border-border rounded-md font-medium text-sm hover:bg-[var(--surface-hover)] no-underline text-foreground transition-colors"
-      >
-        Share as HTML
-      </a>
-      <a
-        href={exportApi.csvUrl(runIds)}
-        className="px-4 py-2 bg-card border border-border rounded-md font-medium text-sm hover:bg-[var(--surface-hover)] no-underline text-foreground transition-colors"
-      >
-        Export CSV
-      </a>
-      <a
-        href={exportApi.jsonUrl(runIds)}
-        className="px-4 py-2 bg-card border border-border rounded-md font-medium text-sm hover:bg-[var(--surface-hover)] no-underline text-foreground transition-colors"
-      >
-        Export JSON
-      </a>
     </div>
   );
 }

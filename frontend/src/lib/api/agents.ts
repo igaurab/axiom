@@ -1,4 +1,4 @@
-import { apiFetch, apiUrl } from "./client";
+import { apiFetch, apiFetchResponse } from "./client";
 import type {
   AgentChatResponse,
   AgentCreate,
@@ -37,9 +37,8 @@ export const agentsApi = {
     }),
 
   chatStream: (id: number, messages: ChatMessage[]) =>
-    fetch(apiUrl(`/api/agents/${id}/chat/stream`), {
+    apiFetchResponse(`/api/agents/${id}/chat/stream`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages }),
     }),
 
