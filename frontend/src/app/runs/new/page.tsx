@@ -457,10 +457,10 @@ export default function NewRunPage() {
               className="w-full px-2.5 py-1.5 border border-border bg-[var(--surface-hover)] rounded-md text-[13px] text-foreground focus:border-brand outline-none"
               value={outputDir}
               onChange={(e) => setOutputDir(e.target.value)}
-              placeholder="~/axiom_data/<label>"
+              placeholder="~/akd_data/<label>"
             />
             <span className="text-xs text-muted-light">
-              Leave blank for default: ~/axiom_data/&lt;label&gt;
+              Leave blank for default: ~/akd_data/&lt;label&gt;
             </span>
           </div>
 

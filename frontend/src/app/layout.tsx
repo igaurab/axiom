@@ -20,7 +20,7 @@ const ibmPlexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Axiom",
+  title: "AKD",
   description: "LLM Agent Benchmark Runner",
 };
 

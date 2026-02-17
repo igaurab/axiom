@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { agentsApi } from "@/lib/api/agents";
-import type { ChatMessage, ReasoningStep, ToolCall, UsageData } from "@/lib/types";
+import type { AgentChatResponse, ChatMessage, ReasoningStep, ToolCall, UsageData } from "@/lib/types";
 import { MarkdownRenderer } from "@/components/markdown/markdown-renderer";
+import { JsonTree } from "@/components/json/json-tree";
 import { ToolPills } from "@/components/tool-calls/tool-pills";
 import { ToolModal } from "@/components/tool-calls/tool-modal";
 import { ReasoningDisplay } from "@/components/grading/reasoning-display";
@@ -32,6 +33,89 @@ interface ChatMessageItem extends ChatMessage {
 
 interface Props {
   agentId: number;
+}
+
+type MessageSegment =
+  | { type: "markdown"; content: string }
+  | { type: "json"; data: unknown };
+
+function tryParseJson(text: string): unknown | null {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function splitMessageSegments(content: string): MessageSegment[] {
+  const fenceRegex = /```([a-zA-Z0-9_-]*)\s*\n([\s\S]*?)```/g;
+  const chunks: MessageSegment[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = fenceRegex.exec(content)) !== null) {
+    const fullMatch = match[0];
+    const lang = (match[1] || "").toLowerCase();
+    const body = (match[2] || "").trim();
+    const start = match.index;
+
+    if (start > lastIndex) {
+      chunks.push({ type: "markdown", content: content.slice(lastIndex, start) });
+    }
+
+    const looksJson = body.startsWith("{") || body.startsWith("[");
+    const parsed = (lang === "json" || looksJson) ? tryParseJson(body) : null;
+    if (parsed !== null) {
+      chunks.push({ type: "json", data: parsed });
+    } else {
+      chunks.push({ type: "markdown", content: fullMatch });
+    }
+
+    lastIndex = start + fullMatch.length;
+  }
+
+  if (lastIndex < content.length) {
+    chunks.push({ type: "markdown", content: content.slice(lastIndex) });
+  }
+
+  if (chunks.length === 0) {
+    const parsedWhole = tryParseJson(content.trim());
+    if (parsedWhole !== null) return [{ type: "json", data: parsedWhole }];
+    return [{ type: "markdown", content }];
+  }
+
+  return chunks.filter((chunk) => chunk.type === "json" || chunk.content.trim().length > 0);
+}
+
+function isWideMessageContent(content: string): boolean {
+  if (content.includes("```")) return true;
+  const hasTableHeader = /\|[^\n]+\|\n\|[\s:-|]+\|/m.test(content);
+  if (hasTableHeader) return true;
+  return content.length > 1200;
+}
+
+function MessageContent({ content, inverted = false }: { content: string; inverted?: boolean }) {
+  const segments = useMemo(() => splitMessageSegments(content), [content]);
+  const markdownCls = inverted
+    ? "prose prose-sm max-w-none text-white [&_*]:text-white [&_strong]:text-white [&_em]:text-white/95 [&_a]:text-white [&_code]:text-white [&_code]:bg-white/15 [&_pre]:bg-white/10 [&_p]:my-1"
+    : undefined;
+  const jsonCls = inverted
+    ? "jt-root font-mono text-sm leading-relaxed text-white [&_.text-json-key]:text-white [&_.text-json-string]:text-white [&_.text-json-number]:text-white [&_.text-json-bool]:text-white [&_.text-json-null]:text-white"
+    : "jt-root font-mono text-sm leading-relaxed";
+
+  return (
+    <div className="space-y-2">
+      {segments.map((segment, idx) =>
+        segment.type === "json" ? (
+          <div key={`json-${idx}`} className={jsonCls}>
+            <JsonTree data={segment.data} defaultOpen maxOpenDepth={2} />
+          </div>
+        ) : (
+          <MarkdownRenderer key={`md-${idx}`} content={segment.content} className={markdownCls} />
+        )
+      )}
+    </div>
+  );
 }
 
 export function AgentChatView({ agentId }: Props) {
@@ -113,16 +197,8 @@ export function AgentChatView({ agentId }: Props) {
       const payload = next
         .filter((m) => !m.pending)
         .map(({ role, content }) => ({ role, content }));
-      const res = await agentsApi.chatStream(agentId, payload);
-      if (!res.ok || !res.body) {
-        const body = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(body.detail || `API error ${res.status}`);
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
       let doneEmitted = false;
+      let sawStreamEvent = false;
 
       const updatePending = (fn: (current: ChatMessageItem) => ChatMessageItem) => {
         setMessages((prev) =>
@@ -136,8 +212,42 @@ export function AgentChatView({ agentId }: Props) {
         return [...prev.slice(-4), eventText];
       };
 
+      const applyCompletedPayload = (data: Partial<AgentChatResponse>) => {
+        doneEmitted = true;
+        updatePending((m) => ({
+          ...m,
+          pending: false,
+          pending_status: null,
+          pending_events: [],
+          pending_reasoning: "",
+          content: data.assistant_message || m.content || "",
+          error: data.error || null,
+          meta: {
+            tool_calls: data.tool_calls || undefined,
+            reasoning: data.reasoning || m.meta?.reasoning || undefined,
+            usage: data.usage || undefined,
+            estimated_cost_usd: data.estimated_cost_usd,
+            cost_breakdown: data.cost_breakdown || undefined,
+            missing_model_pricing: data.missing_model_pricing,
+            trace_log_id: data.trace_log_id,
+          },
+        }));
+      };
+
+      const runNonStreamingFallback = async () => {
+        const fallback = await agentsApi.chat(agentId, payload);
+        applyCompletedPayload(fallback);
+      };
+
       const handleEvent = (eventType: string, dataRaw: string) => {
-        const data = dataRaw ? JSON.parse(dataRaw) : {};
+        let data: Record<string, unknown> = {};
+        if (dataRaw) {
+          try {
+            data = JSON.parse(dataRaw) as Record<string, unknown>;
+          } catch {
+            data = {};
+          }
+        }
         if (eventType === "text_delta") {
           const delta = String(data.delta || "");
           updatePending((m) => ({
@@ -171,49 +281,62 @@ export function AgentChatView({ agentId }: Props) {
             pending_events: appendEvent(m, `${status}: ${name}`),
           }));
         } else if (eventType === "done") {
-          doneEmitted = true;
-          updatePending((m) => ({
-            ...m,
-            pending: false,
-            pending_status: null,
-            pending_events: [],
-            pending_reasoning: "",
-            content: data.assistant_message || m.content || "",
-            error: data.error || null,
-            meta: {
-              tool_calls: data.tool_calls || undefined,
-              reasoning: data.reasoning || m.meta?.reasoning || undefined,
-              usage: data.usage || undefined,
-              estimated_cost_usd: data.estimated_cost_usd,
-              cost_breakdown: data.cost_breakdown,
-              missing_model_pricing: data.missing_model_pricing,
-              trace_log_id: data.trace_log_id,
-            },
-          }));
+          applyCompletedPayload(data as Partial<AgentChatResponse>);
         } else if (eventType === "error") {
           throw new Error(String(data.error || "Streaming error"));
         }
+      };
+
+      const res = await agentsApi.chatStream(agentId, payload);
+      if (!res.ok) {
+        if (res.status === 404 || res.status === 405 || res.status === 501) {
+          await runNonStreamingFallback();
+          return;
+        }
+        const body = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(body.detail || `API error ${res.status}`);
+      }
+      if (!res.body) {
+        await runNonStreamingFallback();
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      const processRawEvent = (rawEvent: string) => {
+        if (!rawEvent.trim()) return;
+        sawStreamEvent = true;
+        let eventType = "message";
+        const dataLines: string[] = [];
+        rawEvent.split(/\r?\n/).forEach((line) => {
+          if (line.startsWith("event:")) eventType = line.slice(6).trim();
+          if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+        });
+        const dataRaw = dataLines.join("\n");
+        handleEvent(eventType, dataRaw);
       };
 
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
-        let idx: number;
-        while ((idx = buffer.search(/\r?\n\r?\n/)) >= 0) {
-          const rawEvent = buffer.slice(0, idx).trim();
-          const delim = buffer.match(/\r?\n\r?\n/);
-          buffer = buffer.slice(idx + (delim ? delim[0].length : 2));
-          if (!rawEvent) continue;
-          let eventType = "message";
-          const dataLines: string[] = [];
-          rawEvent.split(/\r?\n/).forEach((line) => {
-            if (line.startsWith("event:")) eventType = line.slice(6).trim();
-            if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
-          });
-          const dataRaw = dataLines.join("\n");
-          handleEvent(eventType, dataRaw);
+        let match = buffer.match(/\r?\n\r?\n/);
+        while (match) {
+          const idx = match.index ?? -1;
+          if (idx < 0) break;
+          const rawEvent = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + match[0].length);
+          processRawEvent(rawEvent);
+          match = buffer.match(/\r?\n\r?\n/);
         }
+      }
+
+      const tail = decoder.decode();
+      if (tail) buffer += tail;
+      if (buffer.trim()) {
+        processRawEvent(buffer.trim());
       }
 
       if (!doneEmitted) {
@@ -221,6 +344,15 @@ export function AgentChatView({ agentId }: Props) {
           ...m,
           pending: false,
           pending_status: null,
+          pending_events: [],
+          content:
+            !sawStreamEvent && !m.content
+              ? "ERROR: Stream ended before a final response."
+              : m.content,
+          error:
+            !sawStreamEvent && !m.content
+              ? "Stream ended before a final response."
+              : m.error || null,
         }));
       }
     } catch (err) {
@@ -266,8 +398,8 @@ export function AgentChatView({ agentId }: Props) {
             <div
               className={
                 m.role === "user"
-                  ? "ml-auto w-fit max-w-[65%] rounded-xl px-3 py-2 text-sm bg-primary text-primary-foreground"
-                  : `max-w-[65%] rounded-xl px-3 py-2 text-sm bg-[var(--surface)] border border-border text-foreground ${
+                  ? "ml-auto w-fit max-w-[65%] rounded-xl px-3 py-2 text-sm bg-primary text-white"
+                  : `${m.content && isWideMessageContent(m.content) ? "max-w-[92%]" : "max-w-[65%]"} rounded-xl px-3 py-2 text-sm bg-[var(--surface)] border border-border text-foreground ${
                       m.pending ? "w-fit" : ""
                     }`
               }
@@ -275,31 +407,50 @@ export function AgentChatView({ agentId }: Props) {
               {m.pending ? (
                 <div className="space-y-1">
                   {m.content ? (
-                    <MarkdownRenderer content={m.content} />
+                    <MessageContent content={m.content} inverted={m.role === "user"} />
                   ) : (
-                    <>
-                      {!!m.pending_events?.length && (
-                        <div className="text-[11px] text-muted-light space-y-0.5">
-                          {m.pending_events.slice(-3).map((evt, i) => (
-                            <div key={`${m.id}-evt-${i}`}>• {evt}</div>
-                          ))}
-                        </div>
-                      )}
-                      {m.pending_status && (
-                        <div className="text-[11px] text-muted-light">{m.pending_status}</div>
-                      )}
-                      {!m.pending_status && !m.pending_events?.length && (
-                        <div className="inline-flex items-end gap-1 text-muted">
-                          <span className="w-1.5 h-1.5 rounded-full bg-current animate-bounce [animation-delay:0ms]" />
-                          <span className="w-1.5 h-1.5 rounded-full bg-current animate-bounce [animation-delay:120ms]" />
-                          <span className="w-1.5 h-1.5 rounded-full bg-current animate-bounce [animation-delay:240ms]" />
-                        </div>
-                      )}
-                    </>
+                    (() => {
+                      const recent = (m.pending_events || []).slice(-3);
+                      const activeAction =
+                        m.pending_status || recent[recent.length - 1] || "";
+                      const history = recent
+                        .filter((evt, idx) => !(evt === activeAction && idx === recent.length - 1))
+                        .slice(-2);
+                      return (
+                        <>
+                          {!!history.length && (
+                            <div className="text-[11px] text-muted-light space-y-0.5">
+                              {history.map((evt, i) => (
+                                <div key={`${m.id}-evt-${i}`}>• {evt}</div>
+                              ))}
+                            </div>
+                          )}
+                          {!!activeAction ? (
+                            <div className="inline-flex items-center gap-1.5 text-[14px] font-medium text-black dark:text-foreground">
+                              <span>{activeAction}</span>
+                              <span className="inline-flex items-center gap-0.5 text-black/70 dark:text-foreground/70">
+                                <span className="w-1 h-1 rounded-full bg-current animate-bounce [animation-delay:0ms]" />
+                                <span className="w-1 h-1 rounded-full bg-current animate-bounce [animation-delay:120ms]" />
+                                <span className="w-1 h-1 rounded-full bg-current animate-bounce [animation-delay:240ms]" />
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="inline-flex items-center gap-1.5 text-[14px] font-medium text-black dark:text-foreground">
+                              <span>Thinking</span>
+                              <span className="inline-flex items-center gap-0.5 text-black/70 dark:text-foreground/70">
+                                <span className="w-1 h-1 rounded-full bg-current animate-bounce [animation-delay:0ms]" />
+                                <span className="w-1 h-1 rounded-full bg-current animate-bounce [animation-delay:120ms]" />
+                                <span className="w-1 h-1 rounded-full bg-current animate-bounce [animation-delay:240ms]" />
+                              </span>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()
                   )}
                 </div>
               ) : (
-                <MarkdownRenderer content={m.content} />
+                <MessageContent content={m.content} inverted={m.role === "user"} />
               )}
             </div>
             {m.role === "assistant" && !m.pending && m.meta && (
@@ -319,6 +470,7 @@ export function AgentChatView({ agentId }: Props) {
           toolCalls={toolModal.toolCalls}
           initialIdx={toolModal.idx}
           queryLabel="Agent chat"
+          zIndex={1200}
           onClose={() => setToolModal(null)}
         />
       )}
@@ -330,21 +482,23 @@ export function AgentChatView({ agentId }: Props) {
             if (e.target === e.currentTarget) setDetailsModal(null);
           }}
         >
-          <div className="bg-card border border-border rounded-xl w-[95%] max-w-[980px] max-h-[85vh] overflow-y-auto p-6 shadow-2xl">
-            <div className="flex items-center justify-between mb-3">
+          <div className="bg-card border border-border rounded-xl w-[95%] max-w-[980px] max-h-[85vh] overflow-y-auto shadow-2xl">
+            <div className="sticky top-0 z-10 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80 border-b border-border px-6 py-3 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-foreground">Assistant details</h3>
               <button
-                className="text-sm px-3 py-1.5 bg-[var(--surface-hover)] border border-border rounded-lg"
                 onClick={() => setDetailsModal(null)}
+                className="text-2xl leading-none text-muted hover:text-foreground hover:bg-[var(--surface-hover)] rounded-md px-2 py-0.5"
+                aria-label="Close assistant details"
               >
-                Close
+                &times;
               </button>
             </div>
 
+            <div className="px-6 pt-4 pb-6">
             <div className="mb-4">
               <div className="text-sm font-semibold text-foreground mb-2">Response</div>
               <div className="max-w-none rounded-lg border border-border bg-[var(--surface)] p-3 text-sm">
-                <MarkdownRenderer content={detailsModal.content || "No assistant text was returned."} />
+                <MessageContent content={detailsModal.content || "No assistant text was returned."} />
               </div>
             </div>
 
@@ -365,6 +519,7 @@ export function AgentChatView({ agentId }: Props) {
                 missingModelPricing={detailsModal.meta?.missing_model_pricing}
                 traceLogId={detailsModal.meta?.trace_log_id}
               />
+            </div>
             </div>
           </div>
         </div>

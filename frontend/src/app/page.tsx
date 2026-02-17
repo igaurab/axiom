@@ -606,7 +606,7 @@ export default function RunsPage() {
                     value={importJsonDir}
                     onChange={(e) => setImportJsonDir(e.target.value)}
                     required
-                    placeholder="~/axiom_data/run_0/json"
+                    placeholder="~/akd_data/run_0/json"
                   />
                   <button
                     type="button"

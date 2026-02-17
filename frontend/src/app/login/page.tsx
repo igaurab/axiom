@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { useAuth } from "@/providers/auth-provider";
@@ -31,10 +32,11 @@ export default function LoginPage() {
   return (
     <div className="min-h-[calc(100vh-8rem)] grid place-items-center py-8">
       <div className="w-full max-w-md panel p-6 sm:p-7">
+        <Image src="/headerLogo.png" alt="AKD logo" width={110} height={26} className="h-[26px] w-auto mb-3" />
         <div className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1 text-[11px] tracking-wide uppercase text-muted-light font-semibold">
           Welcome back
         </div>
-        <h1 className="text-2xl font-semibold mt-3 mb-1">Sign in to Axiom</h1>
+        <h1 className="text-2xl font-semibold mt-3 mb-1">Sign in to AKD</h1>
         <p className="text-sm text-muted mb-6">Continue benchmarking with your workspace setup.</p>
 
         <form onSubmit={onSubmit} className="space-y-4">

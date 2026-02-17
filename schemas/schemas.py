@@ -134,7 +134,7 @@ class RunCreate(BaseModel):
     tags: list[str] = []
     batch_size: int = 10
     query_ids: list[int] | None = None  # None = all queries
-    output_dir: str | None = None  # default ~/axiom_data/<label>
+    output_dir: str | None = None  # default ~/akd_data/<label>
     repeat: int = 1  # run N times
     visibility_scope: str = "project"
 

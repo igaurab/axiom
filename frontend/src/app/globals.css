@@ -261,17 +261,17 @@ body::before {
   }
 }
 
-.axiom-sidebar {
+.akd-sidebar {
   background: var(--card);
   border-right: 1px solid var(--border);
 }
 
-.axiom-workspace-bar {
+.akd-workspace-bar {
   background: var(--card);
   border-bottom: 1px solid var(--border);
 }
 
-.axiom-mobile-bar {
+.akd-mobile-bar {
   background: var(--card);
   border-bottom: 1px solid var(--border);
 }

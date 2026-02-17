@@ -23,7 +23,7 @@ import { useWorkspace } from "@/providers/workspace-provider";
 import { useTheme } from "@/hooks/use-theme";
 import { cn } from "@/lib/utils";
 
-const OPEN_EVENT = "axiom:open-command-palette";
+const OPEN_EVENT = "akd:open-command-palette";
 
 type PaletteCommand = {
   id: string;

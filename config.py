@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     APP_TITLE: str = "Benchmark App"
     DEBUG: bool = False
     OPENAI_API_KEY: str = ""
-    OUTPUT_BASE_DIR: str = "~/axiom_data"
+    OUTPUT_BASE_DIR: str = "~/akd_data"
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,*"
     ACCESS_TOKEN_TTL_MINUTES: int = 30
     REFRESH_TOKEN_TTL_DAYS: int = 30

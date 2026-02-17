@@ -1,5 +1,5 @@
-const ORG_KEY = "axiom.active_org_id";
-const PROJECT_KEY = "axiom.active_project_id";
+const ORG_KEY = "akd.active_org_id";
+const PROJECT_KEY = "akd.active_project_id";
 
 type WorkspaceSnapshot = {
   organizationId: string | null;

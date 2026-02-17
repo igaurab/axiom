@@ -8,8 +8,6 @@ import {
   Activity,
   Bell,
   Bot,
-  ChevronsLeft,
-  ChevronsRight,
   ChevronDown,
   Database,
   LayoutDashboard,
@@ -59,8 +57,31 @@ const desktopNavGroups = [
   },
 ];
 
-const COMMAND_PALETTE_EVENT = "axiom:open-command-palette";
-const NAV_COLLAPSE_STORAGE_KEY = "axiom.nav.collapsed";
+const COMMAND_PALETTE_EVENT = "akd:open-command-palette";
+const NAV_COLLAPSE_STORAGE_KEY = "akd.nav.collapsed";
+
+function SidebarToggleGlyph({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <rect x="2" y="3" width="12" height="10" rx="3" stroke="currentColor" strokeWidth="1.5" />
+      <line
+        x1={collapsed ? 10.5 : 5.5}
+        y1="4.5"
+        x2={collapsed ? 10.5 : 5.5}
+        y2="11.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
 
 function isNotificationForRun(notifType: string) {
   return notifType.startsWith("run_");
@@ -427,13 +448,16 @@ export function Navbar() {
   if (!user) {
     return (
       <div className="app-shell-nav app-shell-nav--public">
-        <nav className="sticky top-0 z-40 axiom-mobile-bar">
+        <nav className="sticky top-0 z-40 akd-mobile-bar">
           <div className="mx-auto max-w-[1520px] h-14 px-4 sm:px-6 flex items-center justify-between gap-3">
-            <Link href="/" className="no-underline inline-flex items-center gap-2">
-              <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-foreground font-bold text-xs">
-                A
-              </span>
-              <span className="font-semibold tracking-tight text-foreground">axiom</span>
+            <Link href="/" className="no-underline inline-flex items-center">
+              <img
+                src="/headerLogo.png"
+                alt="AKD logo"
+                width={132}
+                height={31}
+                className="h-[31px] w-auto"
+              />
             </Link>
             <div className="flex items-center gap-2">
               <button
@@ -458,13 +482,16 @@ export function Navbar() {
 
   return (
     <div className={cn("app-shell-nav app-shell-nav--app", navCollapsed && "app-shell-nav--collapsed")}>
-      <header className="lg:hidden fixed top-0 inset-x-0 z-50 axiom-mobile-bar">
+      <header className="lg:hidden fixed top-0 inset-x-0 z-50 akd-mobile-bar">
         <div className="h-14 px-4 flex items-center justify-between gap-3">
-          <Link href="/" className="no-underline inline-flex items-center gap-2">
-            <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-foreground font-bold text-xs">
-              A
-            </span>
-            <span className="font-semibold text-[15px] tracking-tight">axiom</span>
+          <Link href="/" className="no-underline inline-flex items-center">
+            <img
+              src="/headerLogo.png"
+              alt="AKD logo"
+              width={132}
+              height={31}
+              className="h-[31px] w-auto"
+            />
           </Link>
 
           <div className="flex items-center gap-1.5">
@@ -513,7 +540,7 @@ export function Navbar() {
       </header>
 
       <div className={cn(
-        "hidden lg:flex fixed top-0 right-0 h-12 z-40 axiom-workspace-bar items-center px-4",
+        "hidden lg:flex fixed top-0 right-0 h-12 z-40 akd-workspace-bar items-center px-4",
         navCollapsed ? "left-[72px]" : "left-[248px]",
       )}>
         <div className="flex items-center gap-3 min-w-0">
@@ -620,15 +647,28 @@ export function Navbar() {
       </div>
 
       <aside className={cn(
-        "hidden lg:flex fixed inset-y-0 left-0 z-50 axiom-sidebar py-3 flex-col transition-[width,padding] duration-200",
+        "hidden lg:flex fixed inset-y-0 left-0 z-50 akd-sidebar py-3 flex-col transition-[width,padding] duration-200",
         navCollapsed ? "w-[72px] px-2" : "w-[248px] px-3",
       )}>
         <div className={cn("flex items-center", navCollapsed ? "justify-center" : "justify-between px-1")}>
           <Link href="/" className={cn("no-underline flex items-center", navCollapsed ? "justify-center" : "gap-2 py-1.5")}>
-            <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-foreground font-bold text-xs">
-              A
-            </span>
-            {!navCollapsed && <span className="font-semibold text-foreground tracking-tight">Axiom</span>}
+            {navCollapsed ? (
+              <img
+                src="/AKDLogo.svg"
+                alt="AKD icon"
+                width={32}
+                height={15}
+                className="h-[15px] w-auto"
+              />
+            ) : (
+              <img
+                src="/headerLogo.png"
+                alt="AKD logo"
+                width={132}
+                height={31}
+                className="h-[31px] w-auto"
+              />
+            )}
           </Link>
           {!navCollapsed && (
             <button
@@ -637,7 +677,9 @@ export function Navbar() {
               title="Minimize sidebar"
               aria-label="Minimize sidebar"
             >
-              <ChevronsLeft size={14} className="mx-auto" />
+              <span className="mx-auto inline-flex items-center justify-center">
+                <SidebarToggleGlyph collapsed={false} />
+              </span>
             </button>
           )}
         </div>
@@ -648,7 +690,9 @@ export function Navbar() {
             title="Expand sidebar"
             aria-label="Expand sidebar"
           >
-            <ChevronsRight size={14} className="mx-auto" />
+            <span className="mx-auto inline-flex items-center justify-center">
+              <SidebarToggleGlyph collapsed />
+            </span>
           </button>
         )}
 

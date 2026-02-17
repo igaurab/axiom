@@ -3,7 +3,7 @@ import { getActiveWorkspace } from "@/lib/workspace";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 const AUTH_REFRESH_PATH = "/api/auth/refresh";
 const AUTH_ME_PATH = "/api/auth/me";
-export const AUTH_UNAUTHORIZED_EVENT = "axiom:auth-unauthorized";
+export const AUTH_UNAUTHORIZED_EVENT = "akd:auth-unauthorized";
 let refreshPromise: Promise<boolean> | null = null;
 
 function workspaceHeaders(): Record<string, string> {

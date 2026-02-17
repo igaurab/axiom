@@ -548,7 +548,15 @@ async def chat_with_agent_stream(
             await db.commit()
             yield f"event: error\ndata: {json.dumps({'error': str(exc), 'trace_log_id': trace.id})}\n\n"
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/{agent_id}/traces", response_model=list[TraceLogOut])
