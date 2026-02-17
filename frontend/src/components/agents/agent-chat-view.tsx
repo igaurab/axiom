@@ -119,29 +119,7 @@ function MessageContent({ content, inverted = false }: { content: string; invert
 }
 
 export function AgentChatView({ agentId }: Props) {
-  const storageKey = useMemo(() => `agent-chat-${agentId}`, [agentId]);
-  const [messages, setMessages] = useState<ChatMessageItem[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const raw = sessionStorage.getItem(`agent-chat-${agentId}`);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw) as ChatMessageItem[];
-      if (!Array.isArray(parsed)) return [];
-      return parsed.map((m, idx) => ({
-        id: m.id || `restored-${idx}-${Date.now()}`,
-        role: m.role,
-        content: m.content,
-        meta: m.meta,
-        error: m.error,
-        pending: false,
-        pending_status: null,
-        pending_events: [],
-        pending_reasoning: "",
-      }));
-    } catch {
-      return [];
-    }
-  });
+  const [messages, setMessages] = useState<ChatMessageItem[]>([]);
   const [input, setInput] = useState("");
   const [toolModal, setToolModal] = useState<{ toolCalls: ToolCall[]; idx: number } | null>(null);
   const [detailsModal, setDetailsModal] = useState<ChatMessageItem | null>(null);
@@ -150,8 +128,9 @@ export function AgentChatView({ agentId }: Props) {
   const messagesRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    sessionStorage.setItem(storageKey, JSON.stringify(messages));
-  }, [storageKey, messages]);
+    if (typeof window === "undefined") return;
+    sessionStorage.removeItem(`agent-chat-${agentId}`);
+  }, [agentId]);
 
   const lastMessage = messages[messages.length - 1];
   const streamingContent = lastMessage?.pending
@@ -421,9 +400,14 @@ export function AgentChatView({ agentId }: Props) {
           </button>
           <button
             className="px-2.5 py-1 rounded-md text-xs font-medium bg-[var(--surface)] border border-border text-muted hover:text-foreground"
-            onClick={() => setMessages([])}
+            onClick={() => {
+              setMessages([]);
+              setInput("");
+              setToolModal(null);
+              setDetailsModal(null);
+            }}
           >
-            Clear Session
+            New chat
           </button>
         </div>
       </div>
@@ -445,13 +429,15 @@ export function AgentChatView({ agentId }: Props) {
                 className={
                   m.role === "user"
                     ? "ml-auto w-fit max-w-[72%] rounded-2xl px-3.5 py-1.5 text-sm bg-primary text-primary-foreground"
-                    : `${m.content && isWideMessageContent(m.content) ? "max-w-[92%]" : "max-w-[74%]"} chat-assistant-bubble rounded-2xl px-4 py-2.5 text-sm text-foreground ${
+                    : `${m.content && isWideMessageContent(m.content) ? "max-w-[92%]" : "max-w-[74%]"} chat-assistant-bubble rounded-2xl ${
+                        m.pending && !m.content ? "px-3 py-1.5" : "px-4 py-2.5"
+                      } text-sm text-foreground ${
                         m.pending ? "w-fit" : ""
                       }`
                 }
               >
                 {m.pending ? (
-                  <div className="space-y-1">
+                  <div className="space-y-0.5">
                     {m.content ? (
                       <MessageContent content={m.content} inverted={m.role === "user"} />
                     ) : (
@@ -474,10 +460,10 @@ export function AgentChatView({ agentId }: Props) {
                                 ))}
                               </div>
                             )}
-                            <div className="min-h-[16px] text-[12px] text-muted-light">
-                              {showActiveStatus ? activeAction : ""}
-                            </div>
-                            <div className="chat-thinking-gradient text-[15px] font-semibold">Thinking</div>
+                            {showActiveStatus && (
+                              <div className="text-[11px] text-muted-light">{activeAction}</div>
+                            )}
+                            <div className="chat-thinking-gradient text-[14px] font-semibold">Thinking</div>
                           </>
                         );
                       })()
