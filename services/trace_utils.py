@@ -27,6 +27,7 @@ def trace_to_out(trace: TraceLog) -> TraceLogOut:
         run_id=trace.run_id,
         query_id=trace.query_id,
         agent_config_id=trace.agent_config_id,
+        conversation_id=trace.conversation_id,
         trace_type=trace.trace_type,
         provider=trace.provider,
         endpoint=trace.endpoint,

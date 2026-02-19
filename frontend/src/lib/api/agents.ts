@@ -36,26 +36,33 @@ export const agentsApi = {
       body: JSON.stringify({ code }),
     }),
 
-  chat: (id: number, messages: ChatMessage[]) =>
+  chat: (id: number, messages: ChatMessage[], conversationId?: string) =>
     apiFetch<AgentChatResponse>(`/api/agents/${id}/chat`, {
       method: "POST",
-      body: JSON.stringify({ messages }),
+      body: JSON.stringify({ messages, conversation_id: conversationId }),
     }),
 
-  chatStream: (id: number, messages: ChatMessage[]) =>
+  chatStream: (id: number, messages: ChatMessage[], conversationId?: string) =>
     apiFetchResponse(`/api/agents/${id}/chat/stream`, {
       method: "POST",
-      body: JSON.stringify({ messages }),
+      body: JSON.stringify({ messages, conversation_id: conversationId }),
     }),
 
   listTraces: (
     id: number,
-    params?: { status?: string; traceType?: string; runId?: number; limit?: number }
+    params?: {
+      status?: string;
+      traceType?: string;
+      runId?: number;
+      conversationId?: string;
+      limit?: number;
+    }
   ) => {
     const qs = new URLSearchParams();
     if (params?.status) qs.set("status", params.status);
     if (params?.traceType) qs.set("trace_type", params.traceType);
     if (params?.runId !== undefined) qs.set("run_id", String(params.runId));
+    if (params?.conversationId) qs.set("conversation_id", params.conversationId);
     if (params?.limit !== undefined) qs.set("limit", String(params.limit));
     const query = qs.toString();
     return apiFetch<TraceLogOut[]>(

@@ -250,6 +250,13 @@ function isWideMessageContent(content: string): boolean {
   return content.length > 1200;
 }
 
+function createConversationId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `conv-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function MessageContent({
   content,
   inverted = false,
@@ -290,6 +297,7 @@ export function AgentChatView({
 }: Props) {
   const [messages, setMessages] = useState<ChatMessageItem[]>([]);
   const [input, setInput] = useState("");
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [historyHiddenByAgent, setHistoryHiddenByAgent] = useState<Record<number, boolean>>({});
   const [toolModal, setToolModal] = useState<{ toolCalls: ToolCall[]; idx: number } | null>(null);
   const [detailsModal, setDetailsModal] = useState<ChatMessageItem | null>(null);
@@ -304,6 +312,7 @@ export function AgentChatView({
   const suppressMainScrollHandlerRef = useRef(false);
   const suppressThinkingScrollHandlerRef = useRef(false);
   const demoRunIdRef = useRef(0);
+  const demoPausedRef = useRef(false);
   const lastDemoReplayKeyRef = useRef(0);
   const agentIdRef = useRef(agentId);
   const isHistoryHidden = !!historyHiddenByAgent[agentId];
@@ -330,6 +339,8 @@ export function AgentChatView({
     return chatTraces[0] || null;
   }, [chatTraces, focusTraceId]);
 
+  const historyConversationId = activeHistoryTrace?.conversation_id || null;
+
   const historyMessages = useMemo(() => {
     if (!activeHistoryTrace) return [];
     return traceToConversation(activeHistoryTrace);
@@ -339,6 +350,7 @@ export function AgentChatView({
 
   const stopDemo = useCallback(() => {
     demoRunIdRef.current += 1;
+    demoPausedRef.current = false;
     setIsDemoRunning(false);
     setInput("");
   }, []);
@@ -355,6 +367,21 @@ export function AgentChatView({
       new Promise<void>((resolve) => {
         window.setTimeout(resolve, ms);
       });
+    const waitWhilePaused = async () => {
+      while (demoPausedRef.current && !isCancelled()) {
+        await wait(60);
+      }
+    };
+    const waitWithControls = async (ms: number) => {
+      let remaining = ms;
+      while (remaining > 0 && !isCancelled()) {
+        await waitWhilePaused();
+        if (isCancelled()) break;
+        const step = Math.min(remaining, 60);
+        await wait(step);
+        remaining -= step;
+      }
+    };
     const randomInt = (min: number, max: number) =>
       min + Math.floor(Math.random() * (max - min + 1));
     const demoTiming = {
@@ -373,14 +400,36 @@ export function AgentChatView({
     ) => {
       let idx = 0;
       while (idx < text.length) {
+        await waitWhilePaused();
         if (isCancelled()) return;
         const chunkSize = Math.min(text.length - idx, randomInt(chunkMin, chunkMax));
         const chunk = text.slice(idx, idx + chunkSize);
         applyChunk(chunk);
         idx += chunkSize;
-        await wait(randomInt(delayMin, delayMax));
+        await waitWithControls(randomInt(delayMin, delayMax));
       }
     };
+    const waitForHumanStep = async (): Promise<boolean> =>
+      new Promise<boolean>((resolve) => {
+        if (isCancelled()) {
+          resolve(false);
+          return;
+        }
+        const onKeyDown = (event: KeyboardEvent) => {
+          if (event.key.toLowerCase() !== "n") return;
+          event.preventDefault();
+          cleanup(true);
+        };
+        const timer = window.setInterval(() => {
+          if (isCancelled()) cleanup(false);
+        }, 80);
+        const cleanup = (startTyping: boolean) => {
+          window.removeEventListener("keydown", onKeyDown);
+          window.clearInterval(timer);
+          resolve(startTyping);
+        };
+        window.addEventListener("keydown", onKeyDown);
+      });
 
     setIsDemoRunning(true);
     setHistoryHiddenByAgent((prev) => ({ ...prev, [agentId]: true }));
@@ -395,6 +444,8 @@ export function AgentChatView({
         const turn = source[i];
 
         if (turn.role === "user") {
+          const shouldType = await waitForHumanStep();
+          if (!shouldType || isCancelled()) break;
           let typed = "";
           await streamText(
             turn.content,
@@ -408,7 +459,7 @@ export function AgentChatView({
             demoTiming.userTyping.delayMax,
           );
           if (isCancelled()) break;
-          await wait(140);
+          await waitWithControls(140);
           setMessages((prev) => [
             ...prev,
             {
@@ -418,7 +469,7 @@ export function AgentChatView({
             },
           ]);
           setInput("");
-          await wait(210);
+          await waitWithControls(210);
           continue;
         }
 
@@ -469,7 +520,7 @@ export function AgentChatView({
             demoTiming.thinking.delayMax,
           );
           if (isCancelled()) break;
-          await wait(180);
+          await waitWithControls(180);
         }
 
         await streamText(
@@ -509,10 +560,11 @@ export function AgentChatView({
               : m
           )
         );
-        await wait(260);
+        await waitWithControls(260);
       }
     } finally {
       if (demoRunIdRef.current === runId) {
+        demoPausedRef.current = false;
         setIsDemoRunning(false);
         setInput("");
       }
@@ -528,6 +580,10 @@ export function AgentChatView({
   useEffect(() => {
     agentIdRef.current = agentId;
   }, [agentId]);
+
+  useEffect(() => {
+    setActiveConversationId(null);
+  }, [agentId, focusTraceId]);
 
   useEffect(() => {
     if (focusTraceId == null) return;
@@ -571,6 +627,18 @@ export function AgentChatView({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [activeHistoryTrace, isDemoRunning, isStreaming, replayDemoFromHistory, stopDemo]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isDemoRunning) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key.toLowerCase() !== "p") return;
+      event.preventDefault();
+      demoPausedRef.current = !demoPausedRef.current;
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isDemoRunning]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -663,7 +731,12 @@ export function AgentChatView({
   const sendMessage = async () => {
     const text = input.trim();
     if (!text || isStreaming || isDemoRunning) return;
+    const conversationId =
+      activeConversationId ||
+      (!isHistoryHidden ? historyConversationId : null) ||
+      createConversationId();
     const baseMessages = renderedMessages;
+    setActiveConversationId(conversationId);
     setHistoryHiddenByAgent((prev) => ({ ...prev, [agentId]: true }));
     shouldAutoScrollRef.current = true;
     shouldAutoScrollThinkingRef.current = true;
@@ -727,7 +800,7 @@ export function AgentChatView({
       };
 
       const runNonStreamingFallback = async () => {
-        const fallback = await agentsApi.chat(agentId, payload);
+        const fallback = await agentsApi.chat(agentId, payload, conversationId);
         applyCompletedPayload(fallback);
       };
 
@@ -784,7 +857,7 @@ export function AgentChatView({
         }
       };
 
-      const res = await agentsApi.chatStream(agentId, payload);
+      const res = await agentsApi.chatStream(agentId, payload, conversationId);
       if (!res.ok) {
         if (res.status === 404 || res.status === 405 || res.status === 501) {
           await runNonStreamingFallback();
@@ -921,6 +994,7 @@ export function AgentChatView({
             className="px-2.5 py-1 rounded-md text-xs font-medium bg-[var(--surface)] border border-border text-muted hover:text-foreground"
             onClick={() => {
               stopDemo();
+              setActiveConversationId(createConversationId());
               setHistoryHiddenByAgent((prev) => ({ ...prev, [agentId]: true }));
               shouldAutoScrollRef.current = true;
               shouldAutoScrollThinkingRef.current = true;
@@ -1126,7 +1200,7 @@ export function AgentChatView({
           <input
             type="text"
             className="w-full h-10 rounded-full border border-border bg-[var(--surface)] pl-4 pr-12 text-sm text-foreground outline-none"
-            placeholder={isDemoRunning ? "Demo mode replaying..." : "Type a message..."}
+            placeholder="Type a message..."
             value={input}
             readOnly={isDemoRunning}
             onChange={(e) => setInput(e.target.value)}

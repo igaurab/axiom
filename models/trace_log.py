@@ -29,6 +29,9 @@ class TraceLog(Base):
     agent_config_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("agent_configs.id"), nullable=True, index=True
     )
+    conversation_id: Mapped[str | None] = mapped_column(
+        String(120), nullable=True, index=True
+    )
     provider: Mapped[str] = mapped_column(
         String(50), nullable=False, server_default="openai"
     )

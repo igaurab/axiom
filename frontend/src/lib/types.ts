@@ -434,6 +434,7 @@ export interface TraceLogOut {
   run_id: number | null;
   query_id: number | null;
   agent_config_id: number | null;
+  conversation_id: string | null;
   trace_type: string;
   provider: string;
   endpoint: string;

@@ -21,6 +21,7 @@ def _apply_filters(
     status: str | None,
     trace_type: str | None = None,
     agent_config_id: int | None = None,
+    conversation_id: str | None = None,
 ):
     if run_id is not None:
         stmt = stmt.where(TraceLog.run_id == run_id)
@@ -30,6 +31,8 @@ def _apply_filters(
         stmt = stmt.where(TraceLog.trace_type == trace_type)
     if agent_config_id is not None:
         stmt = stmt.where(TraceLog.agent_config_id == agent_config_id)
+    if conversation_id:
+        stmt = stmt.where(TraceLog.conversation_id == conversation_id)
     return stmt
 
 
@@ -42,13 +45,21 @@ async def list_traces(
     status: str | None = None,
     trace_type: str | None = None,
     agent_config_id: int | None = None,
+    conversation_id: str | None = None,
     limit: int = 200,
     db: AsyncSession = Depends(get_db),
 ):
     ctx = get_request_context()
     await require_permission(db, ctx, "traces.read")
     q = min(max(limit, 1), 1000)
-    stmt = _apply_filters(stmt=select(TraceLog), run_id=run_id, status=status, trace_type=trace_type, agent_config_id=agent_config_id)
+    stmt = _apply_filters(
+        stmt=select(TraceLog),
+        run_id=run_id,
+        status=status,
+        trace_type=trace_type,
+        agent_config_id=agent_config_id,
+        conversation_id=conversation_id,
+    )
     stmt = apply_workspace_filter(stmt, TraceLog, ctx)
     stmt = stmt.order_by(TraceLog.created_at.desc()).limit(q)
     result = await db.execute(stmt)
@@ -61,6 +72,7 @@ async def traces_summary(
     status: str | None = None,
     trace_type: str | None = None,
     agent_config_id: int | None = None,
+    conversation_id: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     ctx = get_request_context()
@@ -71,6 +83,7 @@ async def traces_summary(
         status=status,
         trace_type=trace_type,
         agent_config_id=agent_config_id,
+        conversation_id=conversation_id,
     )
     stmt = apply_workspace_filter(stmt, TraceLog, ctx)
     traces = (await db.execute(stmt)).scalars().all()

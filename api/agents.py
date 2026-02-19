@@ -337,6 +337,7 @@ async def chat_with_agent(
         run_id=None,
         query_id=None,
         agent_config_id=agent.id,
+        conversation_id=body.conversation_id,
         trace_type="chat",
         provider="openai",
         endpoint="agents.chat.run",
@@ -452,6 +453,7 @@ async def chat_with_agent_stream(
         run_id=None,
         query_id=None,
         agent_config_id=agent.id,
+        conversation_id=body.conversation_id,
         trace_type="chat",
         provider="openai",
         endpoint="agents.chat.stream",
@@ -617,6 +619,7 @@ async def list_agent_traces(
     status: str | None = None,
     trace_type: str | None = None,
     run_id: int | None = None,
+    conversation_id: str | None = None,
     limit: int = 200,
     db: AsyncSession = Depends(get_db),
 ):
@@ -632,6 +635,8 @@ async def list_agent_traces(
         stmt = stmt.where(TraceLog.trace_type == trace_type)
     if run_id is not None:
         stmt = stmt.where(TraceLog.run_id == run_id)
+    if conversation_id:
+        stmt = stmt.where(TraceLog.conversation_id == conversation_id)
     stmt = stmt.order_by(TraceLog.created_at.desc()).limit(q)
     rows = (await db.execute(stmt)).scalars().all()
     return [trace_to_out(trace) for trace in rows]

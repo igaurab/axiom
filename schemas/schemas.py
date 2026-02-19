@@ -111,6 +111,7 @@ class ChatMessageIn(BaseModel):
 
 class AgentChatRequest(BaseModel):
     messages: list[ChatMessageIn]
+    conversation_id: str | None = None
 
 
 class AgentChatResponse(BaseModel):
@@ -373,6 +374,7 @@ class TraceLogOut(BaseModel):
     run_id: int | None
     query_id: int | None
     agent_config_id: int | None
+    conversation_id: str | None = None
     trace_type: str
     provider: str
     endpoint: str
